@@ -3,6 +3,7 @@ import Database from "@tauri-apps/plugin-sql";
 import { useEffect, useState } from "react";
 import { modernIconBtnStyle } from "./utils";
 import AttendanceManager from "./AttendanceManager"; // ✨ 新しく作った専門家を呼ぶ
+import PaySlipManager from "./PaySlipManager"; // 👈 これを追加！
 
 function App() {
   const [db, setDb] = useState<Database | null>(null);
@@ -66,13 +67,22 @@ function App() {
         
         await sqlite.execute("PRAGMA foreign_keys = ON;");
         setDb(sqlite);
-        
+
         const resStaff = await sqlite.select<any[]>("SELECT * FROM staff ORDER BY id ASC");
         setStaffList(resStaff);
       } catch (error) { console.error(error); }
     };
     init();
   }, []);
+
+  const tabStyle = (isActive: boolean) => ({
+    padding: "12px 15px",
+    cursor: "pointer",
+    borderRadius: "5px",
+    marginBottom: "5px",
+    backgroundColor: isActive ? "#3498db" : "transparent",
+    transition: "background-color 0.2s"
+  });
 
   const refreshData = async () => {
     if (!db) return;
@@ -211,8 +221,10 @@ function App() {
       <nav style={{ width: "220px", backgroundColor: "#2c3e50", color: "#ecf0f1", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px", fontSize: "20px", fontWeight: "bold", borderBottom: "1px solid #34495e" }}>⚓️ はま給与</div>
         <ul style={{ listStyle: "none", padding: "10px", margin: 0 }}>
-          <li onClick={() => setActiveTab("staff")} style={{ padding: "12px 15px", cursor: "pointer", borderRadius: "5px", marginBottom: "5px", backgroundColor: activeTab === "staff" ? "#3498db" : "transparent" }}>👤 従業員管理</li>
-          <li onClick={() => setActiveTab("attendance")} style={{ padding: "12px 15px", cursor: "pointer", borderRadius: "5px", backgroundColor: activeTab === "attendance" ? "#3498db" : "transparent" }}>📅 勤務・給与</li>
+          <li onClick={() => setActiveTab("staff")} style={tabStyle(activeTab === "staff")}>👤 従業員管理</li>
+          <li onClick={() => setActiveTab("attendance")} style={tabStyle(activeTab === "attendance")}>📅 勤務・給与</li>
+          {/* 🆕 追加 */}
+          <li onClick={() => setActiveTab("payslip")} style={tabStyle(activeTab === "payslip")}>📄 給与明細書</li>
         </ul>
       </nav>
 
@@ -434,6 +446,14 @@ function App() {
             setTargetYear={setTargetYear}
             targetMonth={targetMonth}
             setTargetMonth={setTargetMonth}
+          />
+        )}
+        {activeTab === "payslip" && db && (
+          <PaySlipManager 
+            db={db} 
+            staffList={staffList} 
+            targetYear={targetYear} 
+            targetMonth={targetMonth} 
           />
         )}
       </div>

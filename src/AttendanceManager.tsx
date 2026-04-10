@@ -158,32 +158,14 @@ export default function AttendanceManager({
             const currentRow = prev[date] || {};
             if (currentRow[field] === value) return prev;
 
-            const [hh, mm] = value.split(":");
-            const isFullyTyped = hh.length === 2 && mm.length === 2;
-
-            // 🆕 ここがポイント！
-            // 「保存済みだった行」を書き換えたなら、文字数が揃っていなくても即座に 
-            // isSaved: false にする（＝変更あり状態にする）。
-            // ただし、もともと「空」だった行をいじっている最中だけは、
-            // ガチャガチャしないように isSaved: true のフリを継続する。
-            
-            const isOriginalEmpty = !currentRow[field] || currentRow[field] === ":";
-            let nextIsSaved = false;
-
-            if (isOriginalEmpty && !isFullyTyped) {
-                // 新規入力中でまだ4桁揃っていない間は、まだボタンを出さない
-                nextIsSaved = true; 
-            } else {
-                // 一度保存された行をいじった場合は、1文字目から「未保存(false)」にする
-                nextIsSaved = false;
-            }
-
+            // 🆕 ロジックを単純化：変更があれば「未保存」確定。
+            // ただし、空の状態からいじり始めた時は、まだ「保存ボタン」を出さないフラグとして使う
             return {
                 ...prev,
                 [date]: { 
                     ...currentRow, 
                     [field]: value, 
-                    isSaved: nextIsSaved 
+                    isSaved: false // フリをやめて、常に false に
                 }
             };
         });
@@ -289,58 +271,70 @@ export default function AttendanceManager({
     // セット内の狭い余白（デフォルトより少し詰めたい場合）
     const tdTightStyle = { ...tdStyle, paddingRight: "4px" };
 
-    // --- ★ 集計ロジック（スナップショット対応版） ★ ---
+    // --- ★ 集計ロジック（60時間超・JSX対応版） ★ ---
     const savedRows = monthlyWorkData ? Object.values(monthlyWorkData).filter(row => row?.isSaved) : [];
     
     let totalHours = 0;
-    let totalOvertimeHours = 0;
     let totalNightHours = 0;
-    let totalPayAmount = 0; // ⬅️ ここに1日ごとの給与を足していく
+    let totalOvertimeHours = 0; // 画面表示用の「全残業時間」
+    let monthlyOTCounter = 0;   // 60h判定用の「累計カウンター」
+    let totalEarnings = 0;      // 給与の合計（交通費以外）
 
-    savedRows.forEach(row => {
-        const hours = Number(row.savedHours) || 0;
-        const night = Number(row.nightHours) || 0;
+    // 日付順にソートして累計計算を正確にする
+    const sortedDates = Object.keys(monthlyWorkData)
+        .filter(date => monthlyWorkData[date].isSaved)
+        .sort();
+
+    sortedDates.forEach(date => {
+        const row = monthlyWorkData[date];
+        const h = Number(row.savedHours) || 0;
+        const n = Number(row.nightHours) || 0;
         
-        // 修正：staffListがない場合のガードを強化
-        const currentStaffInfo = staffList?.find(s => String(s.id) === String(selectedStaffId));
-        const currentHourlyWage = currentStaffInfo?.hourly_wage || 0;
+        // スタッフ情報の取得
+        const staffInfo = staffList?.find(s => String(s.id) === String(selectedStaffId));
+        const wage = Number(row.actual_hourly_wage) || Number(staffInfo?.hourly_wage) || 0;
 
-        const wage = row.actual_hourly_wage || currentHourlyWage;
-        const ovRate = row.overtime_rate || PAYROLL_SETTINGS.OVERTIME_RATE;
-        const niRate = row.night_rate || 0.25;
+        totalHours += h;
+        totalNightHours += n;
 
-        totalHours += hours;
-        totalNightHours += night;
+        // 1日の残業時間を計算 (8時間超)
+        const dailyOT = Math.max(0, h - PAYROLL_SETTINGS.OVERTIME_THRESHOLD);
+        totalOvertimeHours += dailyOT;
 
-        let dailyOvertime = 0;
-        if (hours > PAYROLL_SETTINGS.OVERTIME_THRESHOLD) {
-            dailyOvertime = hours - PAYROLL_SETTINGS.OVERTIME_THRESHOLD;
-            totalOvertimeHours += dailyOvertime;
+        // --- 給与計算 ---
+        let dailyAmount = wage * h; // 基本給
+        dailyAmount += (wage * 0.25 * n); // 深夜割増分
+
+        // 残業割増分（0.01h単位で累計60hをチェック）
+        if (dailyOT > 0) {
+            for (let i = 0; i < dailyOT; i += 0.01) {
+                if (monthlyOTCounter < 60) {
+                    dailyAmount += (wage * 0.25 * 0.01);
+                } else {
+                    dailyAmount += (wage * 0.50 * 0.01);
+                }
+                monthlyOTCounter += 0.01;
+            }
         }
-
-        // 🆕 以前の3行にあたる計算を「1日分ずつ」行い、合計に加算
-        const dayBase = wage * hours; 
-        const dayOverExtra = wage * (ovRate - 1) * dailyOvertime; 
-        const dayNightExtra = wage * niRate * night;
-        
-        totalPayAmount += (dayBase + dayOverExtra + dayNightExtra);
+        totalEarnings += dailyAmount;
     });
 
-    const basePay = Math.ceil(totalPayAmount);
-
+    // 交通費の計算
     const currentStaff = staffList?.find(s => String(s.id) === String(selectedStaffId));
-    const workDays = savedRows.length;
-
-    // 交通費
+    const workDays = sortedDates.length;
     let totalCommute = 0;
-    if (currentStaff) { // ここでしっかりチェックしているのでOK
+    if (currentStaff) {
+        const cWage = Number(currentStaff.commute_wage) || 0;
         if (currentStaff.commute_type === "daily") {
-            totalCommute = (currentStaff.commute_wage || 0) * workDays;
+            totalCommute = cWage * workDays;
         } else if (currentStaff.commute_type === "monthly") {
-            totalCommute = currentStaff.commute_wage || 0;
+            totalCommute = cWage;
         }
     }
-    const totalPay = basePay + totalCommute;
+
+    // JSXで使用する最終的な変数
+    const totalPay = Math.ceil(totalEarnings) + totalCommute;
+    const over60Hours = Math.max(0, monthlyOTCounter - 60); // もし画面に出すなら
 
     return (
         <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
@@ -409,27 +403,64 @@ export default function AttendanceManager({
                                     savedHours: Number(rowData.savedHours) || 0
                                 };
 
-                                // 1. 時間が「00:00」形式か
                                 const isFullyTyped = (t: string) => {
                                     if (!t || t === ":") return false;
                                     const [h, m] = t.split(":");
                                     return h.length === 2 && m.length === 2;
                                 };
 
-                                // 2. 出退勤が揃っているか
+                                const hasAnyInput = (t: string) => {
+                                    return t && t !== ":" && t.replace(":", "").length > 0;
+                                };
+
+                                const toMin = (t: string) => {
+                                    const [h, m] = t.split(":").map(Number);
+                                    return h * 60 + m;
+                                };
+
+                                const isEmpty = !hasAnyInput(row.in) && !hasAnyInput(row.out) && 
+                                                !hasAnyInput(row.bStart) && !hasAnyInput(row.bEnd) &&
+                                                !hasAnyInput(row.outTime) && !hasAnyInput(row.returnTime);
+
                                 const isBaseComplete = isFullyTyped(row.in) && isFullyTyped(row.out);
 
-                                // 3. 休憩/外出が「セットで」揃っているか
-                                const isBreakComplete = isFullyTyped(row.bStart) === isFullyTyped(row.bEnd);
-                                const isOutComplete = isFullyTyped(row.outTime) === isFullyTyped(row.returnTime);
+                                // 🆕 ここで定義しておくと矛盾チェックが動きます
+                                const isBreakComplete = isFullyTyped(row.bStart) && isFullyTyped(row.bEnd);
+                                const isOutComplete = isFullyTyped(row.outTime) && isFullyTyped(row.returnTime);
 
-                                // 4. 保存・更新ができる状態（すべての整合性がOK）
-                                const isAllInputValid = isBaseComplete && isBreakComplete && isOutComplete;
+                                const isBreakIncomplete = (hasAnyInput(row.bStart) || hasAnyInput(row.bEnd)) && !isBreakComplete;
+                                const isOutIncomplete = (hasAnyInput(row.outTime) || hasAnyInput(row.returnTime)) && !isOutComplete;
 
-                                // 5. 変更があるか
+                                // --- 🆕 時間枠の矛盾チェック ---
+                                let isTimeRangeError = false;
+                                if (isBaseComplete) {
+                                    const start = toMin(row.in);
+                                    const end = toMin(row.out);
+
+                                    if (end <= start) isTimeRangeError = true;
+
+                                    if (isBreakComplete) {
+                                        if (toMin(row.bStart) < start || toMin(row.bEnd) > end) isTimeRangeError = true;
+                                        if (toMin(row.bEnd) <= toMin(row.bStart)) isTimeRangeError = true;
+                                    }
+
+                                    if (isOutComplete) {
+                                        if (toMin(row.outTime) < start || toMin(row.returnTime) > end) isTimeRangeError = true;
+                                        if (toMin(row.returnTime) <= toMin(row.outTime)) isTimeRangeError = true;
+                                    }
+                                }
+
+                                // 🆕 isTimeRangeError を条件に追加
+                                const isAllInputValid = isBaseComplete && !isBreakIncomplete && !isOutIncomplete && !isTimeRangeError;
+
+                                // --- 状態判定・計算系（これらが必要！） ---
                                 const hasChange = !row.isSaved;
 
-                                const { total: currentHours } = calcDetailedDiff(row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime);
+                                const { total: currentHours } = calcDetailedDiff(
+                                    row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime
+                                );
+
+                                const hasSavedRecord = rowData.isSaved && rowData.savedHours >= 0;
 
                                 return (
                                     <tr key={dateStr} style={{ 
@@ -446,29 +477,82 @@ export default function AttendanceManager({
 
                                         <td style={{ ...tdStyle, width: "140px" }}>
                                             <div style={{ display: "flex", alignItems: "center", gap: "8px", height: "45px" }}>
-                                                {row.isSaved ? (
-                                                    // --- 保存済み状態 ---
-                                                    <>
-                                                        <span>✅</span>
-                                                        <span style={{ 
-                                                            color: row.savedHours > PAYROLL_SETTINGS.OVERTIME_THRESHOLD ? "#e74c3c" : "#2ecc71", 
-                                                            fontWeight: "bold" 
-                                                        }}>
-                                                            {formatHours(row.savedHours)}
-                                                        </span>
-                                                    </>
+                                                {rowData.isSaved && !hasChange ? (
+                                                    /* 親要素に relative を指定し、高さを固定（例: 45px） */
+                                                    <div style={{ 
+                                                        position: "relative", 
+                                                        height: "45px", 
+                                                        display: "flex", 
+                                                        alignItems: "center" 
+                                                    }}>
+                                                        
+                                                        {/* メインの行（チェックと実働時間） */}
+                                                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                                            <span style={{ fontSize: "14px", display: "flex", alignItems: "center" }}>✅</span>
+                                                            
+                                                            <div style={{ 
+                                                                color: row.savedHours > PAYROLL_SETTINGS.OVERTIME_THRESHOLD ? "#e74c3c" : "#2ecc71", 
+                                                                fontWeight: "bold",
+                                                                display: "flex",
+                                                                alignItems: "baseline",
+                                                                lineHeight: "1"
+                                                            }}>
+                                                                <span style={{ fontSize: "16px" }}>{Math.floor(row.savedHours)}</span>
+                                                                <span style={{ fontSize: "10px", marginLeft: "2px", marginRight: "4px" }}>時間</span>
+                                                                <span style={{ fontSize: "16px" }}>{Math.round((row.savedHours % 1) * 60)}</span>
+                                                                <span style={{ fontSize: "10px", marginLeft: "2px" }}>分</span>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* 🆕 残業チップ：単位を小さくして表示 */}
+                                                        {row.savedHours > PAYROLL_SETTINGS.OVERTIME_THRESHOLD && (
+                                                            <div style={{ 
+                                                                position: "absolute",
+                                                                top: "31px",
+                                                                left: "20px",
+                                                                fontSize: "9px", // チップ全体の基準サイズ
+                                                                color: "#e74c3c", 
+                                                                backgroundColor: "#fff5f5", 
+                                                                padding: "0px 4px", 
+                                                                borderRadius: "3px", 
+                                                                border: "1px solid #ffcccc",
+                                                                whiteSpace: "nowrap",
+                                                                display: "flex",        // 🆕 横並び
+                                                                alignItems: "baseline"  // 🆕 下端揃え
+                                                            }}>
+                                                                <span style={{ marginRight: "3px" }}>残業</span>
+                                                                
+                                                                {/* 時間の数字 */}
+                                                                <span style={{ fontSize: "10px", fontWeight: "bold" }}>
+                                                                    {Math.floor(row.savedHours - PAYROLL_SETTINGS.OVERTIME_THRESHOLD)}
+                                                                </span>
+                                                                {/* 時間の単位（さらに小さく） */}
+                                                                <span style={{ fontSize: "8px", marginLeft: "1px", marginRight: "2px" }}>時間</span>
+                                                                
+                                                                {/* 分の数字 */}
+                                                                <span style={{ fontSize: "10px", fontWeight: "bold" }}>
+                                                                    {Math.round(((row.savedHours - PAYROLL_SETTINGS.OVERTIME_THRESHOLD) % 1) * 60)}
+                                                                </span>
+                                                                {/* 分の単位（さらに小さく） */}
+                                                                <span style={{ fontSize: "8px", marginLeft: "1px" }}>分</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 ) : (
                                                     // --- 未保存（入力中）状態 ---
                                                     <div style={{ fontSize: "13px" }}>
-                                                        {isAllInputValid ? (
-                                                            // 入力がすべて揃った！
-                                                            <span style={{ color: "#3498db", fontWeight: "bold" }}>
-                                                                🚀 {currentHours}h
-                                                            </span>
+                                                        {isEmpty ? (
+                                                            <span style={{ color: "#bdc3c7" }}>-</span>
+                                                        ) : isTimeRangeError ? (
+                                                            // 🆕 矛盾がある時は赤字で警告！
+                                                            <span style={{ color: "#e74c3c", fontWeight: "bold" }}>⚠️ 時間枠不正</span>
+                                                        ) : isAllInputValid ? (
+                                                            <span style={{ color: "#3498db", fontWeight: "bold" }}>🚀 {currentHours}h</span>
                                                         ) : (
-                                                            // 休憩だけ足りない、などの入力途中
                                                             <span style={{ color: "#bdc3c7", fontStyle: "italic" }}>
-                                                                {isBaseComplete ? "休憩入力待ち..." : "入力中..."}
+                                                                {isBreakIncomplete ? "休憩入力待ち..." : 
+                                                                isOutIncomplete ? "外出入力待ち..." : 
+                                                                !isBaseComplete ? "入力中..." : "保存できます"}
                                                             </span>
                                                         )}
                                                     </div>
@@ -517,28 +601,42 @@ export default function AttendanceManager({
                         color: "white", 
                         borderRadius: "12px",
                         display: "grid",
-                        gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", 
-                        gap: "20px"
+                        gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1.5fr", // 支給額を少し広く
+                        gap: "15px"
                     }}>
                         <div>
                             <div style={{ fontSize: "12px", color: "#bdc3c7" }}>基本情報</div>
-                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>{workDays} 日 / {formatHours(totalHours)}</div>
+                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>{workDays}日 / {formatHours(totalHours)}</div>
                         </div>
+                        
                         <div>
-                            <div style={{ fontSize: "12px", color: "#e74c3c" }}>残業時間 (0.25割増)</div>
-                            <div style={{ fontSize: "18px", fontWeight: "bold", color: "#e74c3c" }}>{formatHours(totalOvertimeHours)}</div>
+                            <div style={{ fontSize: "12px", color: "#e74c3c" }}>残業合計 (割増込)</div>
+                            <div style={{ fontSize: "18px", fontWeight: "bold", color: "#e74c3c" }}>
+                                {formatHours(totalOvertimeHours)}
+                            </div>
+                            {/* 🆕 60h超がある時だけ、ひっそり、かつ赤く警告 */}
+                            {monthlyOTCounter > 60 && (
+                                <div style={{ fontSize: "11px", color: "#ff7675" }}>
+                                    (うち50%増: {formatHours(monthlyOTCounter - 60)})
+                                </div>
+                            )}
                         </div>
+
                         <div>
-                            <div style={{ fontSize: "12px", color: "#f1c40f" }}>深夜時間 (0.25割増)</div>
+                            <div style={{ fontSize: "12px", color: "#f1c40f" }}>深夜合計</div>
                             <div style={{ fontSize: "18px", fontWeight: "bold", color: "#f1c40f" }}>{formatHours(totalNightHours)}</div>
                         </div>
+
                         <div>
                             <div style={{ fontSize: "12px", color: "#bdc3c7" }}>交通費</div>
-                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>¥ {totalCommute.toLocaleString()}</div>
+                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>¥{totalCommute.toLocaleString()}</div>
                         </div>
-                        <div style={{ borderLeft: "1px solid #7f8c8d", paddingLeft: "20px" }}>
-                            <div style={{ fontSize: "12px", color: "#2ecc71" }}>💰 総支給額</div>
-                            <div style={{ fontSize: "24px", fontWeight: "bold", color: "#2ecc71" }}>¥ {totalPay.toLocaleString()}</div>
+
+                        <div style={{ borderLeft: "1px solid #7f8c8d", paddingLeft: "20px", textAlign: "right" }}>
+                            <div style={{ fontSize: "12px", color: "#2ecc71" }}>💰 総支給額（概算）</div>
+                            <div style={{ fontSize: "28px", fontWeight: "bold", color: "#2ecc71" }}>
+                                ¥{totalPay.toLocaleString()}
+                            </div>
                         </div>
                     </div>
                 </section>
