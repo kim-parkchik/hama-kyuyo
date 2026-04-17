@@ -20,16 +20,17 @@ interface Props {
     attendanceData: any[];
     year: number;
     month: number;
+    companySettings: any; // これを追加
     onClose: () => void;
 }
 
-export default function PayStubModal({ db, staff, attendanceData, year, month, onClose }: Props) {
+export default function PayStubModal({ db, staff, attendanceData, year, month, companySettings, onClose }: Props) {
     const [extras, setExtras] = useState<SalaryExtras>({
         allowanceName:   "役職手当",
         allowanceAmount: 0,
         residentTax:     Number(staff.resident_tax)     || 0,
         prefecture:      staff.prefecture               || "東京",
-        dependents:      Number(staff.dependents_count) || 0,
+        dependents:      Number(staff.dependents) || 0,
         customItems:     [],
     });
 
@@ -37,17 +38,31 @@ export default function PayStubModal({ db, staff, attendanceData, year, month, o
         const loadCustomItems = async () => {
             if (!db) return;
             try {
-                const rows = await db.select<any[]>(
+                // SQLの戻り値の型を定義
+                interface SalaryItemRow {
+                    name: string;
+                    type: 'earning' | 'deduction';
+                    amount: number;
+                }
+
+                // selectの後ろに <...> を付けず、結果をキャストする
+                const rows = await db.select(
                     `SELECT m.name, m.type, COALESCE(v.amount, 0) as amount
                     FROM salary_item_master m
                     LEFT JOIN staff_salary_values v ON m.id = v.item_id AND v.staff_id = ?
                     WHERE m.category != 'formula'
                     ORDER BY m.type DESC, m.id ASC`,
                     [staff.id]
-                );
+                ) as SalaryItemRow[]; // 👈 ここで型を確定させる
+
                 const items = rows
-                .filter(r => r.amount > 0)
-                .map(r => ({ name: r.name, amount: Number(r.amount), type: r.type as 'earning' | 'deduction' }));
+                    .filter(r => r.amount > 0)
+                    .map(r => ({ 
+                        name: r.name, 
+                        amount: Number(r.amount), 
+                        type: r.type 
+                    }));
+
                 setExtras(p => ({ ...p, customItems: items }));
             } catch (e) {
                 console.error("customItems 読み込みエラー:", e);
@@ -57,8 +72,8 @@ export default function PayStubModal({ db, staff, attendanceData, year, month, o
     }, [db, staff.id]);
 
     const salary = useMemo(
-        () => calculateSalary(staff, attendanceData, extras, year, month),
-        [staff, attendanceData, extras, year, month]
+    () => calculateSalary(staff, attendanceData, extras, year, month, companySettings), // ★ {} から変更
+        [staff, attendanceData, extras, year, month, companySettings] // ★ 依存配列にも追加
     );
 
     const wageLabel = staff.wage_type === "monthly" ? "月給制" : "時給制";

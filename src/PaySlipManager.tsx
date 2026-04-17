@@ -22,6 +22,7 @@ export default function PaySlipManager({ db, staffList, targetYear: initialYear,
     const [showRetired, setShowRetired] = useState(false);
     const [onlyHasAttendance, setOnlyHasAttendance] = useState(false);
     const [allAttendance, setAllAttendance] = useState<any[]>([]);
+    const [companySettings, setCompanySettings] = useState<any>(null);
 
     // 全勤怠データをこの月の分だけ一括取得（「勤怠あり」の判定用）
     useEffect(() => {
@@ -29,6 +30,9 @@ export default function PaySlipManager({ db, staffList, targetYear: initialYear,
         db.select<any[]>("SELECT staff_id FROM attendance WHERE work_date LIKE ?", [`${year}-${monthStr}-%`])
             .then(setAllAttendance);
         db.select<any[]>("SELECT * FROM branches ORDER BY id ASC").then(setBranches);
+        db.select<any[]>("SELECT * FROM company WHERE id = 1").then(res => {
+            if (res && res.length > 0) setCompanySettings(res[0]);
+        });
     }, [db, year, month]);
 
     const filteredStaff = useMemo(() => {
@@ -123,7 +127,7 @@ export default function PaySlipManager({ db, staffList, targetYear: initialYear,
                     
                                     <td style={tdS}>
                                         <div style={{ fontSize: "12px", color: "#666" }}>{s.wage_type === "monthly" ? "月給" : "時給"}</div>
-                                        <div style={{ fontWeight: "600" }}>¥{Number(s.hourly_wage).toLocaleString()}</div>
+                                        <div style={{ fontWeight: "600" }}>¥{Number(s.base_wage).toLocaleString()}</div>
                                     </td>
 
                                     <td style={tdS}>
@@ -148,7 +152,15 @@ export default function PaySlipManager({ db, staffList, targetYear: initialYear,
             </div>
 
             {showModal && selectedStaff && (
-                <PayStubModal db={db} staff={selectedStaff} attendanceData={attendanceData} year={year} month={month} onClose={() => setShowModal(false)} />
+                <PayStubModal 
+                    db={db} 
+                    staff={selectedStaff} 
+                    attendanceData={attendanceData} 
+                    year={year} 
+                    month={month} 
+                    companySettings={companySettings} // 🆕 ここを追加！
+                    onClose={() => setShowModal(false)} 
+                />
             )}
         </div>
     );

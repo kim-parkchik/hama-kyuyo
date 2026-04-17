@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
-import { fetchAddressByZip } from "./utils"; // 👈 utilsからインポート
+import { fetchAddressByZip } from "./utils";
 
 interface Props {
     db: Database;
@@ -9,6 +9,8 @@ interface Props {
 }
 
 export default function CompanyManager({ db, onSetupComplete }: Props) {
+    // --- タブ管理 ---
+    const [activeSubTab, setActiveSubTab] = useState<"info" | "branches" | "rounding">("info");
     const [hasSavedOnce, setHasSavedOnce] = useState(false);
 
     // --- 会社情報用ステート ---
@@ -36,6 +38,24 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
     const [bLabor, setBLabor] = useState("");       // ✨追加
     const [isSearchingBZip, setIsSearchingBZip] = useState(false);
     const [deletingBranchId, setDeletingBranchId] = useState<number | null>(null);
+
+    // --- 🆕 端数処理設定用ステート ---
+    const [roundOvertime, setRoundOvertime] = useState("round");  // 残業
+    const [roundSocialIns, setRoundSocialIns] = useState("floor"); // 社会保険
+    const [roundEmpIns, setRoundEmpIns] = useState("round");     // 雇用保険
+
+    // --- タブ切り替えボタンのスタイル ---
+    const subTabStyle = (isActive: boolean) => ({
+        padding: "10px 20px",
+        cursor: "pointer",
+        fontSize: "14px",
+        fontWeight: "bold" as const,
+        border: "none",
+        borderBottom: isActive ? "3px solid #3498db" : "3px solid transparent",
+        backgroundColor: "transparent",
+        color: isActive ? "#3498db" : "#7f8c8d",
+        transition: "all 0.2s"
+    });
 
     // フォーカス状態
     const [isZipFocus, setIsZipFocus] = useState(false);
@@ -103,8 +123,12 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                 setCompPhone(c.phone || "");
                 setCompNum(c.corporate_number || "");
                 setCompRep(c.representative || "");
-                setCompHealth(c.health_ins_num || ""); // ✨
-                setCompLabor(c.labor_ins_num || "");   // ✨
+                setCompHealth(c.health_ins_num || "");
+                setCompLabor(c.labor_ins_num || "");
+                // --- 👇 🆕 端数処理設定をDBから読み込む ---
+                setRoundOvertime(c.round_overtime || "round");
+                setRoundSocialIns(c.round_social_ins || "floor");
+                setRoundEmpIns(c.round_emp_ins || "round");
                 if (c.name) setHasSavedOnce(true);
             }
             const resB = await db.select<any[]>("SELECT * FROM branches ORDER BY id ASC");
@@ -125,9 +149,16 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
         setIsSaving(true);
         try {
             await db.execute(
-                `REPLACE INTO company (id, name, zip_code, address, phone, corporate_number, representative, health_ins_num, labor_ins_num) 
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [compName, compZip, compAddr, compPhone, compNum, compRep, compHealth, compLabor]
+                `REPLACE INTO company (
+                    id, name, zip_code, address, phone, corporate_number, representative, 
+                    health_ins_num, labor_ins_num, 
+                    round_overtime, round_social_ins, round_emp_ins
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    compName, compZip, compAddr, compPhone, compNum, compRep, 
+                    compHealth, compLabor, 
+                    roundOvertime, roundSocialIns, roundEmpIns // 👈 追加
+                ]
             );
             await db.execute(
                 `UPDATE branches SET name = ?, zip_code = ?, prefecture = ?, address = ?, phone = ?, health_ins_num = ?, labor_ins_num = ? 
@@ -233,7 +264,27 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
         }
     };
 
-    const isSetup = compName.trim() !== "" && headPref !== "";
+    // --- 🆕 端数処理設定だけを保存する関数 ---
+    const saveRoundingSettings = async () => {
+        setIsSaving(true);
+        try {
+            await db.execute(
+                `UPDATE company SET 
+                    round_overtime = ?, 
+                    round_social_ins = ?, 
+                    round_emp_ins = ? 
+                WHERE id = 1`,
+                [roundOvertime, roundSocialIns, roundEmpIns]
+            );
+            alert("端数処理設定を保存しました");
+            await loadData(); // 最新状態を再読み込み
+        } catch (e) {
+            console.error(e);
+            alert("保存に失敗しました");
+        } finally {
+            setIsSaving(false);
+        }
+    };
 
     // 法人番号検索ロジック（例）
     const searchCorporateNumber = async () => {
@@ -261,266 +312,400 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
 
     return (
         <div style={{ maxWidth: "900px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "30px", paddingBottom: "100px" }}>
-            
-            {!hasSavedOnce && (
-                <div style={welcomeBannerStyle}>
-                    <h2 style={{ margin: 0 }}>🚢 はじめに：初期設定</h2>
-                    <p style={{ margin: "10px 0 0 0" }}>会社名と所在地を設定して、アプリを開始しましょう。</p>
-                </div>
-            )}
-
-            <section>
-                <h2 style={{ color: "#2c3e50", marginBottom: "20px", fontSize: "20px" }}>🏢 会社情報</h2>
-                <div style={cardStyle}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "25px" }}>
-                        
-                        {/* --- 法人番号を最上部に配置 --- */}
-                        <div style={{ gridColumn: "1 / 3", borderBottom: "1px solid #f1f5f9", paddingBottom: "20px", marginBottom: "5px" }}>
-                            <label style={labelStyle}>法人番号 (13桁)</label>
-                            <div style={{ display: "flex", boxShadow: "0 1px 2px rgba(0,0,0,0.05)", borderRadius: "6px", overflow: "hidden" }}>
-                                <input 
-                                    value={compNum} 
-                                    onChange={e => setCompNum(e.target.value)} 
-                                    onFocus={handleFocus}
-                                    onBlur={(e) => handleBlur(e)}
-                                    placeholder="例: 1234567890123" 
-                                    style={{ ...zipInputStyle, flex: 1 }} 
-                                />
-                                <button 
-                                    onClick={() => alert("法人番号検索APIと連携して、情報を自動取得する機能をここに追加できます")}
-                                    onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#edf2f7")}
-                                    onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#f8fafc")}
-                                    style={{ ...zipBtnStyle, width: "120px", borderLeft: "1px solid #ddd" }}
-                                >
-                                    🔍 法人番号検索
-                                </button>
-                            </div>
-                        </div>
-
-                        <div style={{ gridColumn: "1 / 3" }}>
-                            <label style={labelStyle}>会社名 / 屋号 (必須)</label>
-                            <input 
-                                value={compName} 
-                                onChange={e => setCompName(e.target.value)} 
-                                onFocus={handleFocus}
-                                onBlur={(e) => handleBlur(e, !compName.trim())}
-                                placeholder="株式会社 〇〇" 
-                                style={{ 
-                                    ...inputStyle, 
-                                    borderColor: !compName.trim() ? "#e74c3c" : "#ddd",
-                                }} 
-                            />
-                        </div>
-
-                        {/* 住所セクション（ここも focus/blur を追加） */}
-                        <div style={{ gridColumn: "1 / 3", backgroundColor: "#fcfcfc", padding: "15px", borderRadius: "8px", border: "1px solid #eee" }}>
-                            <label style={labelStyle}>📍 本店所在地</label>
-                            <div style={{ display: "flex", marginBottom: "10px", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-                                <input 
-                                    value={compZip} 
-                                    onChange={e => setCompZip(e.target.value)} 
-                                    onFocus={(e) => { setIsZipFocus(true); handleFocus(e); }}
-                                    onBlur={(e) => { setIsZipFocus(false); handleBlur(e); }}
-                                    placeholder="郵便番号" 
-                                    style={{ 
-                                        ...zipInputStyle, width: "150px", 
-                                        zIndex: isZipFocus ? 2 : 0,
-                                    }} 
-                                />
-                                <button 
-                                    onClick={() => handleZipSearch(compZip, setCompZip, setHeadPref, setCompAddr, setIsSearchingZip)} 
-                                    style={{ ...zipBtnStyle, zIndex: 1 }}
-                                >
-                                    {isSearchingZip ? "⌛" : "🔍 住所検索"}
-                                </button>
-                            </div>
-                            <div style={{ display: "flex", gap: "10px" }}>
-                                <select 
-                                    value={headPref} 
-                                    onChange={e => setHeadPref(e.target.value)} 
-                                    onFocus={handleFocus}
-                                    // 未選択なら赤、選択済みなら通常色に戻す
-                                    onBlur={(e) => handleBlur(e, !headPref)}
-                                    style={{ 
-                                        ...inputStyle, 
-                                        width: "160px", 
-                                        borderColor: !headPref ? "#e74c3c" : "#ddd", // 必須チェック
-                                        color: !headPref ? "#e74c3c" : "#2c3e50"     // 文字色も少し変えると気づきやすい
-                                    }}
-                                >
-                                    <option value="">都道府県 (必須)</option>
-                                    {["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"].map(p => <option key={p} value={p}>{p}</option>)}
-                                </select>
-                                <input 
-                                    value={compAddr} 
-                                    onChange={e => setCompAddr(e.target.value)} 
-                                    onFocus={handleFocus}
-                                    onBlur={(e) => handleBlur(e)}
-                                    placeholder="市区町村・番地" 
-                                    style={inputStyle} 
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label style={labelStyle}>代表者名</label>
-                            <input value={compRep} onChange={e => setCompRep(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e)} style={inputStyle} />
-                        </div>
-                        <div>
-                            <label style={labelStyle}>電話番号</label>
-                            <input value={compPhone} onChange={e => setCompPhone(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e)} style={inputStyle} />
-                        </div>
-
-                        {/* ✨ 会社用の社会保険・労働保険番号入力欄 */}
-                        <div style={{ gridColumn: "1 / 3", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", padding: "15px", backgroundColor: "#f0f9ff", borderRadius: "8px" }}>
-                            <div><label style={labelStyle}>🛡️ 社会保険 整理記号・番号</label><input value={compHealth} onChange={e => setCompHealth(e.target.value)} placeholder="例: 12-あいう 1234" style={inputStyle} /></div>
-                            <div><label style={labelStyle}>🏗️ 労働保険番号</label><input value={compLabor} onChange={e => setCompLabor(e.target.value)} placeholder="例: 12-1-03-123456-000" style={inputStyle} /></div>
-                        </div>
-
-                        <div style={{ gridColumn: "1 / 3" }}>
-                            <button 
-                                onClick={saveCompany} 
-                                disabled={isSaving || !compName.trim() || !headPref} 
-                                style={{ 
-                                    ...btnStyle, 
-                                    width: "100%", 
-                                    backgroundColor: isSaving ? "#2ecc71" : (!hasSavedOnce ? "#3498db" : "#34495e"),
-                                    opacity: (isSaving || !compName.trim() || !headPref) ? 0.6 : 1, // 押せないときは少し薄く
-                                    cursor: (isSaving || !compName.trim() || !headPref) ? "not-allowed" : "pointer"
-                                }}
-                            >
-                                {isSaving ? "✅ 保存完了" : (hasSavedOnce ? "💾 会社情報を更新" : "🚀 設定を完了して開始")}
-                            </button>
-                            
-                            {/* 必須項目が漏れている場合のアシスト表示 */}
-                            {(!compName.trim() || !headPref) && (
-                                <p style={{ fontSize: "12px", color: "#e74c3c", textAlign: "center", marginTop: "8px", fontWeight: "bold" }}>
-                                    ※会社名と都道府県を入力すると保存できます
-                                </p>
-                            )}
-                        </div>
+        
+            {/* --- 1. 未保存（初回）ならタブを出さずに「会社情報」だけ表示 --- */}
+            {!hasSavedOnce ? (
+                <>
+                    <div style={welcomeBannerStyle}>
+                        <h2 style={{ margin: 0 }}>🚢 はじめに：初期設定</h2>
+                        <p style={{ margin: "10px 0 0 0" }}>会社名と所在地を設定して、アプリを開始しましょう。</p>
                     </div>
-                </div>
-            </section>
 
-            {hasSavedOnce && (
-                <section>
-                    <h2 style={{ color: "#2c3e50", marginBottom: "20px", fontSize: "20px" }}>📍 支店リスト</h2>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "25px" }}>
-                        {/* 左：リスト */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                            {branches.map((b) => (
-                                <div key={b.id} style={{ ...branchCardStyle, borderLeft: b.id === 1 ? "5px solid #3498db" : "5px solid #94a3b8", backgroundColor: editingBranchId === b.id ? "#fff9db" : "white" }}>
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                            <span style={b.id === 1 ? headBadgeStyle : branchBadgeStyle}>{b.id === 1 ? "本店" : "支店"}</span>
-                                            <strong>{b.name}</strong>
-                                        </div>
-                                        <div style={{ fontSize: "12px", color: "#7f8c8d" }}>〒{b.zip_code} {b.prefecture}{b.address}</div>
+                    <section>
+                        <h2 style={{ color: "#2c3e50", marginBottom: "20px", fontSize: "20px" }}>🏢 会社情報</h2>
+                        <div style={cardStyle}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "25px" }}>
+                                
+                                {/* --- 法人番号を最上部に配置 --- */}
+                                <div style={{ gridColumn: "1 / 3", borderBottom: "1px solid #f1f5f9", paddingBottom: "20px", marginBottom: "5px" }}>
+                                    <label style={labelStyle}>法人番号 (13桁)</label>
+                                    <div style={{ display: "flex", boxShadow: "0 1px 2px rgba(0,0,0,0.05)", borderRadius: "6px", overflow: "hidden" }}>
+                                        <input 
+                                            value={compNum} 
+                                            onChange={e => setCompNum(e.target.value)} 
+                                            onFocus={handleFocus}
+                                            onBlur={(e) => handleBlur(e)}
+                                            placeholder="例: 1234567890123" 
+                                            style={{ ...zipInputStyle, flex: 1 }} 
+                                        />
+                                        <button 
+                                            onClick={() => alert("法人番号検索APIと連携して、情報を自動取得する機能をここに追加できます")}
+                                            onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#edf2f7")}
+                                            onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#f8fafc")}
+                                            style={{ ...zipBtnStyle, width: "120px", borderLeft: "1px solid #ddd" }}
+                                        >
+                                            🔍 法人番号検索
+                                        </button>
                                     </div>
-                                    {b.id !== 1 && (
-                                        <button onClick={() => startEditBranch(b)} style={editBtnStyle}>編集</button>
-                                    )}
-                                    {b.id !== 1 && (
-                                        deletingBranchId === b.id ? (
-                                            <div style={{ display: "flex", gap: "5px" }}>
-                                                <button 
-                                                    onClick={() => deleteBranch(b.id)} 
-                                                    style={{ ...deleteBtnStyle, color: "white", backgroundColor: "#e74c3c", padding: "4px 10px", borderRadius: "4px", fontWeight: "bold" }}
-                                                >
-                                                    本当に削除
-                                                </button>
-                                                <button 
-                                                    onClick={() => setDeletingBranchId(null)} 
-                                                    style={{ ...editBtnStyle, color: "#7f8c8d" }}
-                                                >
-                                                    戻る
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <button onClick={() => deleteBranch(b.id)} style={deleteBtnStyle}>削除</button>
-                                        )
+                                </div>
+
+                                <div style={{ gridColumn: "1 / 3" }}>
+                                    <label style={labelStyle}>会社名 / 屋号 (必須)</label>
+                                    <input 
+                                        value={compName} 
+                                        onChange={e => setCompName(e.target.value)} 
+                                        onFocus={handleFocus}
+                                        onBlur={(e) => handleBlur(e, !compName.trim())}
+                                        placeholder="株式会社 〇〇" 
+                                        style={{ 
+                                            ...inputStyle, 
+                                            borderColor: !compName.trim() ? "#e74c3c" : "#ddd",
+                                        }} 
+                                    />
+                                </div>
+
+                                {/* 住所セクション（ここも focus/blur を追加） */}
+                                <div style={{ gridColumn: "1 / 3", backgroundColor: "#fcfcfc", padding: "15px", borderRadius: "8px", border: "1px solid #eee" }}>
+                                    <label style={labelStyle}>📍 本店所在地</label>
+                                    <div style={{ display: "flex", marginBottom: "10px", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+                                        <input 
+                                            value={compZip} 
+                                            onChange={e => setCompZip(e.target.value)} 
+                                            onFocus={(e) => { setIsZipFocus(true); handleFocus(e); }}
+                                            onBlur={(e) => { setIsZipFocus(false); handleBlur(e); }}
+                                            placeholder="郵便番号" 
+                                            style={{ 
+                                                ...zipInputStyle, width: "150px", 
+                                                zIndex: isZipFocus ? 2 : 0,
+                                            }} 
+                                        />
+                                        <button 
+                                            onClick={() => handleZipSearch(compZip, setCompZip, setHeadPref, setCompAddr, setIsSearchingZip)} 
+                                            style={{ ...zipBtnStyle, zIndex: 1 }}
+                                        >
+                                            {isSearchingZip ? "⌛" : "🔍 住所検索"}
+                                        </button>
+                                    </div>
+                                    <div style={{ display: "flex", gap: "10px" }}>
+                                        <select 
+                                            value={headPref} 
+                                            onChange={e => setHeadPref(e.target.value)} 
+                                            onFocus={handleFocus}
+                                            // 未選択なら赤、選択済みなら通常色に戻す
+                                            onBlur={(e) => handleBlur(e, !headPref)}
+                                            style={{ 
+                                                ...inputStyle, 
+                                                width: "160px", 
+                                                borderColor: !headPref ? "#e74c3c" : "#ddd", // 必須チェック
+                                                color: !headPref ? "#e74c3c" : "#2c3e50"     // 文字色も少し変えると気づきやすい
+                                            }}
+                                        >
+                                            <option value="">都道府県 (必須)</option>
+                                            {["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"].map(p => <option key={p} value={p}>{p}</option>)}
+                                        </select>
+                                        <input 
+                                            value={compAddr} 
+                                            onChange={e => setCompAddr(e.target.value)} 
+                                            onFocus={handleFocus}
+                                            onBlur={(e) => handleBlur(e)}
+                                            placeholder="市区町村・番地" 
+                                            style={inputStyle} 
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={labelStyle}>代表者名</label>
+                                    <input value={compRep} onChange={e => setCompRep(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e)} style={inputStyle} />
+                                </div>
+                                <div>
+                                    <label style={labelStyle}>電話番号</label>
+                                    <input value={compPhone} onChange={e => setCompPhone(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e)} style={inputStyle} />
+                                </div>
+
+                                {/* ✨ 会社用の社会保険・労働保険番号入力欄 */}
+                                <div style={{ gridColumn: "1 / 3", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", padding: "15px", backgroundColor: "#f0f9ff", borderRadius: "8px" }}>
+                                    <div><label style={labelStyle}>🛡️ 社会保険 整理記号・番号</label><input value={compHealth} onChange={e => setCompHealth(e.target.value)} placeholder="例: 12-あいう 1234" style={inputStyle} /></div>
+                                    <div><label style={labelStyle}>🏗️ 労働保険番号</label><input value={compLabor} onChange={e => setCompLabor(e.target.value)} placeholder="例: 12-1-03-123456-000" style={inputStyle} /></div>
+                                </div>
+
+                                <div style={{ gridColumn: "1 / 3" }}>
+                                    <button 
+                                        onClick={saveCompany} 
+                                        disabled={isSaving || !compName.trim() || !headPref} 
+                                        style={{ 
+                                            ...btnStyle, 
+                                            width: "100%", 
+                                            backgroundColor: isSaving ? "#2ecc71" : (!hasSavedOnce ? "#3498db" : "#34495e"),
+                                            opacity: (isSaving || !compName.trim() || !headPref) ? 0.6 : 1, // 押せないときは少し薄く
+                                            cursor: (isSaving || !compName.trim() || !headPref) ? "not-allowed" : "pointer"
+                                        }}
+                                    >
+                                        {isSaving ? "✅ 保存完了" : (hasSavedOnce ? "💾 会社情報を更新" : "🚀 設定を完了して開始")}
+                                    </button>
+                                    
+                                    {/* 必須項目が漏れている場合のアシスト表示 */}
+                                    {(!compName.trim() || !headPref) && (
+                                        <p style={{ fontSize: "12px", color: "#e74c3c", textAlign: "center", marginTop: "8px", fontWeight: "bold" }}>
+                                            ※会社名と都道府県を入力すると保存できます
+                                        </p>
                                     )}
                                 </div>
-                            ))}
+                            </div>
                         </div>
+                    </section>
+                </>
+            ) : (
 
-                        {/* 右：追加・編集ボックス */}
-                        <div style={{ ...addBoxStyle, border: editingBranchId !== null ? "2px solid #f1c40f" : "1px dashed #cbd5e1" }}>
-                            <h4 style={{ margin: "0 0 15px 0" }}>{editingBranchId !== null ? "📝 支店の編集" : "➕ 支店の追加"}</h4>
-                            
-                            <label style={miniLabelStyle}>支店名</label>
-                            <input value={bName} onChange={e => setBName(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} style={{ ...inputStyle, ...inputBottomSpace }} />
-                            
-                            <div style={{ display: "flex", ...inputBottomSpace, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
-                                <input 
-                                    value={bZip} 
-                                    onChange={e => setBZip(e.target.value)} 
-                                    onFocus={(e) => { setIsBZipFocus(true); handleFocus(e); }}
-                                    onBlur={(e) => { setIsBZipFocus(false); handleBlur(e); }}
-                                    placeholder="郵便番号" 
-                                    style={{ ...zipInputStyle, zIndex: isBZipFocus ? 2 : 0 }} 
-                                />
-                                <button 
-                                    onClick={() => handleZipSearch(bZip, setBZip, setBPref, setBAddr, setIsSearchingBZip)} 
-                                    style={{ ...zipBtnStyle, zIndex: 1, borderLeft: "1px solid #ddd" }}
-                                >
-                                    {isSearchingBZip ? "⌛" : "🔍"}
-                                </button>
-                            </div>
-
-                            <select value={bPref} onChange={e => setBPref(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} style={{ ...inputStyle, ...inputBottomSpace }}>
-                                <option value="">都道府県 (必須)</option>
-                                    {["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"].map(p => <option key={p} value={p}>{p}</option>)}
-                            </select>
-
-                            <input value={bAddr} onChange={e => setBAddr(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} placeholder="市区町村・番地" style={{ ...inputStyle, ...inputBottomSpace }} />
-                            
-                            {/* ✨ 支店固有の項目 */}
-                            <label style={miniLabelStyle}>支店電話番号</label>
-                            <input 
-                                value={bPhone} 
-                                onChange={e => setBPhone(e.target.value)} 
-                                placeholder="空欄なら本店と同じ"
-                                style={{ ...inputStyle, ...inputBottomSpace }} 
-                            />
-
-                            <label style={miniLabelStyle}>社会保険番号 (支店固有の場合)</label>
-                            <input 
-                                value={bHealth} 
-                                onChange={e => setBHealth(e.target.value)} 
-                                placeholder="未入力なら本店と同じ"
-                                style={{ ...inputStyle, ...inputBottomSpace }} 
-                            />
-
-                            <label style={miniLabelStyle}>労働保険番号 (支店固有の場合)</label>
-                            <input 
-                                value={bLabor} 
-                                onChange={e => setBLabor(e.target.value)} 
-                                placeholder="未入力なら本店と同じ"
-                                style={{ ...inputStyle, ...inputBottomSpace }} 
-                            />
-                            <div style={{ display: "flex", gap: "10px" }}>
-                                <button 
-                                    onClick={saveBranch} 
-                                    disabled={!bName || !bPref}
-                                    style={{ 
-                                        ...addBtnStyle, 
-                                        backgroundColor: (!bName || !bPref) ? "#bdc3c7" : "#2ecc71" 
-                                    }}
-                                >
-                                    {(!bName || !bPref) ? "支店名と都道府県を入力" : (editingBranchId !== null ? "更新する" : "支店を追加")}
-                                </button>
-                                {editingBranchId !== null && <button onClick={resetBranchForm} style={{ ...addBtnStyle, backgroundColor: "#95a5a6" }}>取消</button>}
-                            </div>
+                /* --- 2. 保存済みなら「設定タブ」を表示して多機能に切り替え --- */
+                <>
+                    <div>
+                        <h2 style={{ color: "#2c3e50", margin: "0 0 15px 0", fontSize: "22px" }}>⚙️ 会社設定</h2>
+                        <div style={{ display: "flex", borderBottom: "1px solid #ddd", gap: "5px" }}>
+                            <button onClick={() => setActiveSubTab("info")} style={subTabStyle(activeSubTab === "info")}>🏢 基本情報</button>
+                            <button onClick={() => setActiveSubTab("branches")} style={subTabStyle(activeSubTab === "branches")}>📍 支店リスト</button>
+                            <button onClick={() => setActiveSubTab("rounding")} style={subTabStyle(activeSubTab === "rounding")}>🔢 端数処理</button>
                         </div>
                     </div>
-                </section>
+
+                    {activeSubTab === "info" && (
+                        <section style={tabContentStyle}>
+                            <div style={cardStyle}>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "25px" }}>
+                                    {/* 法人番号検索セクション */}
+                                    <div style={{ gridColumn: "1 / 3", borderBottom: "1px solid #f1f5f9", paddingBottom: "20px" }}>
+                                        <label style={labelStyle}>法人番号 (13桁)</label>
+                                        <div style={{ display: "flex" }}>
+                                            <input value={compNum} onChange={e => setCompNum(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} placeholder="例: 1234567890123" style={{ ...zipInputStyle, flex: 1 }} />
+                                            <button onClick={searchCorporateNumber} style={{ ...zipBtnStyle, width: "120px", borderLeft: "1px solid #ddd" }}>🔍 自動取得</button>
+                                        </div>
+                                    </div>
+
+                                    {/* 会社名 */}
+                                    <div style={{ gridColumn: "1 / 3" }}>
+                                        <label style={labelStyle}>会社名 / 屋号 (必須)</label>
+                                        <input value={compName} onChange={e => setCompName(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e, !compName.trim())} placeholder="株式会社 〇〇" style={{ ...inputStyle, borderColor: !compName.trim() ? "#e74c3c" : "#ddd" }} />
+                                    </div>
+
+                                    {/* 本店所在地 */}
+                                    <div style={{ gridColumn: "1 / 3", backgroundColor: "#fcfcfc", padding: "15px", borderRadius: "8px", border: "1px solid #eee" }}>
+                                        <label style={labelStyle}>📍 本店所在地</label>
+                                        <div style={{ display: "flex", marginBottom: "10px" }}>
+                                            <input value={compZip} onChange={e => setCompZip(e.target.value)} onFocus={(e) => { setIsZipFocus(true); handleFocus(e); }} onBlur={(e) => { setIsZipFocus(false); handleBlur(e); }} placeholder="郵便番号" style={{ ...zipInputStyle, width: "150px", zIndex: isZipFocus ? 2 : 0 }} />
+                                            <button onClick={() => handleZipSearch(compZip, setCompZip, setHeadPref, setCompAddr, setIsSearchingZip)} style={zipBtnStyle}>{isSearchingZip ? "⌛" : "🔍 住所検索"}</button>
+                                        </div>
+                                        <div style={{ display: "flex", gap: "10px" }}>
+                                            <select value={headPref} onChange={e => setHeadPref(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e, !headPref)} style={{ ...inputStyle, width: "160px" }}>
+                                                <option value="">都道府県 (必須)</option>
+                                                {["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"].map(p => <option key={p} value={p}>{p}</option>)}
+                                            </select>
+                                            <input value={compAddr} onChange={e => setCompAddr(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} placeholder="市区町村・番地" style={inputStyle} />
+                                        </div>
+                                    </div>
+
+                                    {/* 社保・労保番号 */}
+                                    <div style={{ gridColumn: "1 / 3", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", padding: "15px", backgroundColor: "#f0f9ff", borderRadius: "8px" }}>
+                                        <div><label style={labelStyle}>🛡️ 社会保険 整理記号・番号</label><input value={compHealth} onChange={e => setCompHealth(e.target.value)} placeholder="例: 12-あいう 1234" style={inputStyle} /></div>
+                                        <div><label style={labelStyle}>🏗️ 労働保険番号</label><input value={compLabor} onChange={e => setCompLabor(e.target.value)} placeholder="例: 12-1-03-123456-000" style={inputStyle} /></div>
+                                    </div>
+
+                                    <div style={{ gridColumn: "1 / 3" }}>
+                                        <button onClick={saveCompany} disabled={isSaving || !compName.trim() || !headPref} style={{ ...btnStyle, width: "100%", backgroundColor: isSaving ? "#2ecc71" : (!hasSavedOnce ? "#3498db" : "#34495e") }}>
+                                            {isSaving ? "✅ 保存完了" : (hasSavedOnce ? "💾 会社情報を更新" : "🚀 設定を完了して開始")}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSubTab === "branches" && (
+                        <section style={tabContentStyle}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "25px" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                                    {branches.map((b) => (
+                                        <div key={b.id} style={{ ...branchCardStyle, borderLeft: b.id === 1 ? "5px solid #3498db" : "5px solid #94a3b8", backgroundColor: editingBranchId === b.id ? "#fff9db" : "white" }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                                    <span style={b.id === 1 ? headBadgeStyle : branchBadgeStyle}>{b.id === 1 ? "本店" : "支店"}</span>
+                                                    <strong>{b.name}</strong>
+                                                </div>
+                                                <div style={{ fontSize: "12px", color: "#7f8c8d" }}>〒{b.zip_code} {b.prefecture}{b.address}</div>
+                                            </div>
+                                            {b.id !== 1 && <button onClick={() => startEditBranch(b)} style={editBtnStyle}>編集</button>}
+                                            {b.id !== 1 && (
+                                                deletingBranchId === b.id ? (
+                                                    <button onClick={() => deleteBranch(b.id)} style={{...deleteBtnStyle, backgroundColor: "#e74c3c", color: "white", padding: "4px 8px", borderRadius: "4px"}}>本当に削除</button>
+                                                ) : (
+                                                    <button onClick={() => deleteBranch(b.id)} style={deleteBtnStyle}>削除</button>
+                                                )
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                                {/* 右：追加・編集ボックス */}
+                                <div style={{ ...addBoxStyle, border: editingBranchId !== null ? "2px solid #f1c40f" : "1px dashed #cbd5e1" }}>
+                                    <h4 style={{ margin: "0 0 15px 0" }}>{editingBranchId !== null ? "📝 支店の編集" : "➕ 支店の追加"}</h4>
+                                    
+                                    <label style={miniLabelStyle}>支店名</label>
+                                    <input value={bName} onChange={e => setBName(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} style={{ ...inputStyle, ...inputBottomSpace }} />
+                                    
+                                    <div style={{ display: "flex", ...inputBottomSpace, boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+                                        <input 
+                                            value={bZip} 
+                                            onChange={e => setBZip(e.target.value)} 
+                                            onFocus={(e) => { setIsBZipFocus(true); handleFocus(e); }}
+                                            onBlur={(e) => { setIsBZipFocus(false); handleBlur(e); }}
+                                            placeholder="郵便番号" 
+                                            style={{ ...zipInputStyle, zIndex: isBZipFocus ? 2 : 0 }} 
+                                        />
+                                        <button 
+                                            onClick={() => handleZipSearch(bZip, setBZip, setBPref, setBAddr, setIsSearchingBZip)} 
+                                            style={{ ...zipBtnStyle, zIndex: 1, borderLeft: "1px solid #ddd" }}
+                                        >
+                                            {isSearchingBZip ? "⌛" : "🔍"}
+                                        </button>
+                                    </div>
+
+                                    <select value={bPref} onChange={e => setBPref(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} style={{ ...inputStyle, ...inputBottomSpace }}>
+                                        <option value="">都道府県 (必須)</option>
+                                            {["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"].map(p => <option key={p} value={p}>{p}</option>)}
+                                    </select>
+
+                                    <input value={bAddr} onChange={e => setBAddr(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} placeholder="市区町村・番地" style={{ ...inputStyle, ...inputBottomSpace }} />
+                                    
+                                    {/* ✨ 支店固有の項目 */}
+                                    <label style={miniLabelStyle}>支店電話番号</label>
+                                    <input 
+                                        value={bPhone} 
+                                        onChange={e => setBPhone(e.target.value)} 
+                                        placeholder="空欄なら本店と同じ"
+                                        style={{ ...inputStyle, ...inputBottomSpace }} 
+                                    />
+
+                                    <label style={miniLabelStyle}>社会保険番号 (支店固有の場合)</label>
+                                    <input 
+                                        value={bHealth} 
+                                        onChange={e => setBHealth(e.target.value)} 
+                                        placeholder="未入力なら本店と同じ"
+                                        style={{ ...inputStyle, ...inputBottomSpace }} 
+                                    />
+
+                                    <label style={miniLabelStyle}>労働保険番号 (支店固有の場合)</label>
+                                    <input 
+                                        value={bLabor} 
+                                        onChange={e => setBLabor(e.target.value)} 
+                                        placeholder="未入力なら本店と同じ"
+                                        style={{ ...inputStyle, ...inputBottomSpace }} 
+                                    />
+                                    <div style={{ display: "flex", gap: "10px" }}>
+                                        <button 
+                                            onClick={saveBranch} 
+                                            disabled={!bName || !bPref}
+                                            style={{ 
+                                                ...addBtnStyle, 
+                                                backgroundColor: (!bName || !bPref) ? "#bdc3c7" : "#2ecc71" 
+                                            }}
+                                        >
+                                            {(!bName || !bPref) ? "支店名と都道府県を入力" : (editingBranchId !== null ? "更新する" : "支店を追加")}
+                                        </button>
+                                        {editingBranchId !== null && <button onClick={resetBranchForm} style={{ ...addBtnStyle, backgroundColor: "#95a5a6" }}>取消</button>}
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    )}
+
+                    {activeSubTab === "rounding" && (
+                        <section style={tabContentStyle}>
+                            <div style={cardStyle}>
+                                <h3 style={{ marginTop: 0, fontSize: "16px", color: "#34495e" }}>🔢 各計算項目の端数処理ルール</h3>
+                                <p style={{ fontSize: "13px", color: "#7f8c8d", marginBottom: "20px" }}>
+                                    法令および就業規則に基づき、1円未満の端数をどのように処理するかを選択してください。
+                                </p>
+
+                                <div style={{ display: "grid", gap: "20px" }}>
+                                    {/* --- 残業代 --- */}
+                                    <div style={{ ...roundingRowStyle, gap: "20px" }}>
+                                        <div style={{ flex: 1 }}>
+                                            <strong style={{ display: "block", whiteSpace: "nowrap" }}>⏰ 残業代・深夜手当</strong>
+                                            <small style={{ color: "#95a5a6" }}>※労働基準法に基づき、50銭以上切り上げが推奨されます。</small>
+                                        </div>
+                                        <select 
+                                            value={roundOvertime} 
+                                            onChange={e => setRoundOvertime(e.target.value)} 
+                                            style={{ ...inputStyle, width: "320px", flexShrink: 0 }}
+                                        >
+                                            <option value="round">四捨五入（推奨）</option>
+                                            <option value="ceil">常に切り上げ（従業員に有利）</option>
+                                            <option value="floor">常に切り捨て（⚠️未払いのリスクあり）</option>
+                                        </select>
+                                    </div>
+
+                                    {/* --- 社会保険 --- */}
+                                    <div style={{ ...roundingRowStyle, gap: "20px" }}>
+                                        <div style={{ flex: 1 }}>
+                                            <strong style={{ display: "block", whiteSpace: "nowrap" }}>🛡️ 社会保険料（個人負担分）</strong>
+                                            <small style={{ color: "#95a5a6" }}>※通貨単位法により、50銭以下切り捨てが一般的です。</small>
+                                        </div>
+                                        <select 
+                                            value={roundSocialIns} 
+                                            onChange={e => setRoundSocialIns(e.target.value)} 
+                                            style={{ ...inputStyle, width: "320px", flexShrink: 0 }}
+                                        >
+                                            <option value="floor">切り捨て（一般的）</option>
+                                            <option value="round">四捨五入（特約がある場合）</option>
+                                            <option value="ceil">切り上げ</option>
+                                        </select>
+                                    </div>
+
+                                    {/* --- 雇用保険 --- */}
+                                    <div style={{ ...roundingRowStyle, gap: "20px" }}>
+                                        <div style={{ flex: 1 }}>
+                                            <strong style={{ display: "block", whiteSpace: "nowrap" }}>🏗️ 雇用保険料（個人負担分）</strong>
+                                            <small style={{ color: "#95a5a6" }}>※50銭以下切り捨て、51銭以上切り上げルール。</small>
+                                        </div>
+                                        <select 
+                                            value={roundEmpIns} 
+                                            onChange={e => setRoundEmpIns(e.target.value)} 
+                                            style={{ ...inputStyle, width: "320px", flexShrink: 0 }}
+                                        >
+                                            <option value="round">四捨五入（50銭ルールに近い）</option>
+                                            <option value="floor">切り捨て</option>
+                                            <option value="ceil">切り上げ</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <button 
+                                    onClick={() => alert("端数設定を保存しました（DBへ要保存）")}
+                                    style={{ ...btnStyle, marginTop: "30px", backgroundColor: "#34495e", width: "100%" }}
+                                >
+                                    💾 端数処理設定を保存
+                                </button>
+                            </div>
+                        </section>
+                    )}
+                </>
             )}
         </div>
     );
 }
 
+// 追加のスタイル
+const tabContentStyle = {
+    animation: "fadeIn 0.3s ease-in-out"
+};
+
+const roundingRowStyle = {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "15px",
+    backgroundColor: "#f8fafc",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0"
+};
 const welcomeBannerStyle = { backgroundColor: "#ebf5fb", padding: "20px", borderRadius: "12px", border: "1px solid #3498db", color: "#2980b9" };
 const cardStyle = { backgroundColor: "white", padding: "30px", borderRadius: "12px", boxShadow: "0 4px 6px rgba(0,0,0,0.05)" };
 const inputStyle = { 

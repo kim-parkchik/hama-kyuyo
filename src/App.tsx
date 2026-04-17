@@ -7,6 +7,7 @@ import StaffManager from "./StaffManager"; // 👈 追加
 import AttendanceManager from "./AttendanceManager"; // ✨ 新しく作った専門家を呼ぶ
 import PaySlipManager from "./PaySlipManager"; // 👈 これを追加！
 import CustomItemManager from "./CustomItemManager"; // 👈 これを追加！
+import BonusManager from "./BonusManager"; // 👈 これを追加！
 
 function App() {
   const [db, setDb] = useState<Database | null>(null);
@@ -38,6 +39,9 @@ function App() {
             representative TEXT,    -- 代表者名
             health_ins_num TEXT, -- 社会保険（厚年・健保）事業所番号
             labor_ins_num TEXT,  -- 労働保険番号
+            round_overtime TEXT DEFAULT 'round',   -- 残業代（初期値：四捨五入）
+            round_social_ins TEXT DEFAULT 'floor', -- 社会保険（初期値：切り捨て）
+            round_emp_ins TEXT DEFAULT 'round',    -- 雇用保険（初期値：四捨五入）
             annual_holidays INTEGER DEFAULT 120,
             holiday_csv_url TEXT DEFAULT 'https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv'
           );
@@ -139,12 +143,13 @@ function App() {
             phone TEXT, 
             mobile TEXT, 
             wage_type TEXT DEFAULT 'hourly',
-            hourly_wage INTEGER NOT NULL, 
+            base_wage INTEGER NOT NULL, 
+            standard_remuneration INTEGER DEFAULT 0, -- 🆕 標準報酬月額（中ボス）
             calendar_pattern_id INTEGER DEFAULT 1,
             commute_type TEXT DEFAULT 'none', 
-            commute_wage INTEGER DEFAULT 0, 
+            commute_amount INTEGER DEFAULT 0, 
             branch_id INTEGER DEFAULT 0, 
-            dependents_count INTEGER DEFAULT 0, 
+            dependents INTEGER DEFAULT 0, 
             resident_tax INTEGER DEFAULT 0,
             scheduled_work_hours REAL DEFAULT 8.0, -- 1日の所定労働時間（例: 8.0）
             monthly_work_days REAL DEFAULT 20.0,    -- 月平均の所定労働日数（例: 20.33）
@@ -166,7 +171,7 @@ function App() {
             work_hours REAL DEFAULT 0,
             night_hours REAL DEFAULT 0,
             -- 🆕 将来の再現性のための「その時の単価」保存用カラム
-            actual_hourly_wage INTEGER, 
+            actual_base_wage INTEGER, 
             overtime_rate REAL,
             night_rate REAL,
             UNIQUE(staff_id, work_date),
@@ -234,9 +239,10 @@ function App() {
             <>
               <li onClick={() => setActiveTab("calendar")} style={tabStyle(activeTab === "calendar")}>📅 会社カレンダー</li>
               <li onClick={() => setActiveTab("staff")} style={tabStyle(activeTab === "staff")}>👤 従業員管理</li>
-              <li onClick={() => setActiveTab("custom_items")} style={tabStyle(activeTab === "custom_items")}>💰 支給・控除項目管理</li>
-              <li onClick={() => setActiveTab("attendance")} style={tabStyle(activeTab === "attendance")}>📅 勤務・給与</li>
-              <li onClick={() => setActiveTab("payslip")} style={tabStyle(activeTab === "payslip")}>📄 給与明細書</li>
+              <li onClick={() => setActiveTab("custom_items")} style={tabStyle(activeTab === "custom_items")}>⚙️ 項目設定</li> {/* 👈 支給・控除項目 */}
+              <li onClick={() => setActiveTab("attendance")} style={tabStyle(activeTab === "attendance")}>⏱️ 勤怠・月次給与</li>
+              <li onClick={() => setActiveTab("bonus")} style={tabStyle(activeTab === "bonus")}>💰 賞与計算</li> {/* 👈 active判定を修正 */}
+              <li onClick={() => setActiveTab("payslip")} style={tabStyle(activeTab === "payslip")}>📄 明細書出力</li>
             </>
           )}
         </ul>
@@ -275,6 +281,9 @@ function App() {
                 targetMonth={targetMonth}
                 setTargetMonth={setTargetMonth}
               />
+            )}
+            {activeTab === "bonus" && db && (
+              <BonusManager db={db} staffList={staffList} />
             )}
             {activeTab === "payslip" && db && (
               <PaySlipManager 

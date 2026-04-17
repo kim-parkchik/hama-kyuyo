@@ -1,336 +1,263 @@
 /**
  * calcSalary.ts — 給与計算エンジン（2026年度版）
- * * 自動計算: 健康保険料 / 介護保険料 / 厚生年金 / 雇用保険 / 所得税
  */
+import { applyRounding } from './utils';
+import * as Master from './constants/salaryMaster2026';
+
 
 export interface SalaryExtras {
-  allowanceName: string;
-  allowanceAmount: number;
-  residentTax: number;
-  prefecture: string;
-  dependents: number;
-  customItems: { name: string; amount: number; type: 'earning' | 'deduction' }[];
+    allowanceName: string;
+    allowanceAmount: number;
+    residentTax: number;
+    prefecture: string;
+    dependents: number;
+    customItems: { name: string; amount: number; type: 'earning' | 'deduction' }[];
 }
 
 export interface SalaryResult {
-  workDays: number;
-  totalWorkHours: number;
-  totalOvertimeHours: number;
-  totalNightHours: number;
-  basePay: number;
-  absenceDeduction: number;
-  overtime25Pay: number;
-  overtime50Pay: number;
-  nightPay: number;
-  commutePay: number;
-  allowanceAmount: number;
-  customEarnings: number;
-  totalEarnings: number;
-  healthInsurance: number;
-  nursingInsurance: number;
-  welfarePension: number;
-  empInsurance: number;
-  incomeTax: number;
-  residentTax: number;
-  customDeductions: number;
-  totalDeductions: number;
-  netPay: number;
-  isNursingCareTarget: boolean;
-  hyojunHoshu: number;
+    workDays: number;
+    totalWorkHours: number;
+    totalOvertimeHours: number;
+    totalNightHours: number;
+    basePay: number;
+    absenceDeduction: number;
+    overtime25Pay: number;
+    overtime50Pay: number;
+    nightPay: number;
+    commutePay: number;
+    allowanceAmount: number;
+    customEarnings: number;
+    totalEarnings: number;
+    healthInsurance: number;
+    nursingInsurance: number;
+    welfarePension: number;
+    empInsurance: number;
+    incomeTax: number;
+    residentTax: number;
+    customDeductions: number;
+    totalDeductions: number;
+    netPay: number;
+    isNursingCareTarget: boolean;
+    hyojunHoshu: number;
 }
 
-// ═══════════════════════════════════════════════════════════
-// 1. 協会けんぽ 健康保険料率（2026年度見込・本人負担分）
-//    [健保のみ料率, 介護保険込み料率（40〜64歳）]
-// ═══════════════════════════════════════════════════════════
-const KENPO: Record<string, [number, number]> = {
-  "北海道": [5.05, 5.90], "青森": [5.00, 5.85], "岩手": [4.80, 5.65],
-  "宮城": [5.07, 5.92], "秋田": [4.90, 5.75], "山形": [4.89, 5.74],
-  "福島": [4.90, 5.75], "茨城": [4.92, 5.77], "栃木": [4.94, 5.79],
-  "群馬": [4.90, 5.75], "埼玉": [4.90, 5.75], "千葉": [4.94, 5.79],
-  "東京": [4.98, 5.83], "神奈川": [5.03, 5.88], "新潟": [4.85, 5.70],
-  "富山": [4.73, 5.58], "石川": [4.95, 5.80], "福井": [4.63, 5.48],
-  "山梨": [5.01, 5.86], "長野": [4.84, 5.69], "静岡": [4.82, 5.67],
-  "愛知": [4.95, 5.80], "三重": [4.88, 5.73], "滋賀": [4.95, 5.80],
-  "京都": [5.07, 5.92], "大阪": [5.07, 5.92], "兵庫": [5.11, 5.96],
-  "奈良": [4.95, 5.80], "和歌山": [4.88, 5.73], "鳥取": [4.87, 5.72],
-  "島根": [4.90, 5.75], "岡山": [5.00, 5.85], "広島": [5.06, 5.91],
-  "山口": [4.91, 5.76], "徳島": [4.94, 5.79], "香川": [5.05, 5.90],
-  "愛媛": [4.94, 5.79], "高知": [5.01, 5.86], "福岡": [4.95, 5.80],
-  "佐賀": [4.90, 5.75], "長崎": [4.88, 5.73], "熊本": [4.95, 5.80],
-  "大分": [4.82, 5.67], "宮崎": [4.84, 5.69], "鹿児島": [4.89, 5.74],
-  "沖縄": [4.85, 5.70],
-};
-export const PREFECTURES = Object.keys(KENPO);
-
-// 厚生年金：18.3%（折半で9.15%） ※固定化されています
-const PENSION_RATE = 9.15; 
-// 雇用保険：2026年度 一般の事業（本人負担 0.7% = 7/1000）
-const EMP_INS_RATE = 0.007;
-
-// ═══════════════════════════════════════════════════════════
-// 2. 標準報酬月額 等級表（協会けんぽ 2026年）
-// ═══════════════════════════════════════════════════════════
-const HYOJUN: [number, number, number][] = [
-  [0,63000,58000],[63000,73000,68000],[73000,83000,78000],[83000,93000,88000],
-  [93000,101000,98000],[101000,107000,104000],[107000,114000,110000],
-  [114000,122000,118000],[122000,130000,126000],[130000,138000,134000],
-  [138000,146000,142000],[146000,155000,150000],[155000,165000,160000],
-  [165000,175000,170000],[175000,185000,180000],[185000,195000,190000],
-  [195000,210000,200000],[210000,230000,220000],[230000,250000,240000],
-  [250000,270000,260000],[270000,290000,280000],[290000,310000,300000],
-  [310000,330000,320000],[330000,350000,340000],[350000,370000,360000],
-  [370000,395000,380000],[395000,425000,410000],[425000,455000,440000],
-  [455000,485000,470000],[485000,515000,500000],[515000,545000,530000],
-  [545000,575000,560000],[575000,605000,590000],[605000,635000,620000],
-  [635000,665000,650000],[665000,695000,680000],[695000,730000,710000],
-  [730000,770000,750000],[770000,810000,790000],[810000,855000,830000],
-  [855000,905000,880000],[905000,955000,930000],[955000,1005000,980000],
-  [1005000,1055000,1030000],[1055000,1115000,1090000],[1115000,1175000,1150000],
-  [1175000,Infinity,1210000],
-];
+export const PREFECTURES = Object.keys(Master.KENPO_RATES);
 
 export const getHyojunHoshu = (monthly: number): number => {
-  for (const [lo, hi, std] of HYOJUN) {
-    if (monthly >= lo && monthly < hi) return std;
-  }
-  return HYOJUN[HYOJUN.length - 1][2];
+    for (const [lo, hi, std] of Master.HYOJUN_TABLE) {
+        if (monthly >= lo && monthly < hi) return std;
+    }
+    return Master.HYOJUN_TABLE[Master.HYOJUN_TABLE.length - 1][2];
 };
 
-// ═══════════════════════════════════════════════════════════
-// 3. 源泉徴収税額表（月額・甲欄 2026年版）
-// ═══════════════════════════════════════════════════════════
-const GENSEN: [number, number, ...number[]][] = [
-  [0,88000,0,0,0,0,0,0,0,0],
-  [88000,89000,130,0,0,0,0,0,0,0],[89000,90000,180,0,0,0,0,0,0,0],
-  [90000,91000,230,0,0,0,0,0,0,0],[91000,92000,290,0,0,0,0,0,0,0],
-  [92000,93000,340,0,0,0,0,0,0,0],[93000,94000,390,0,0,0,0,0,0,0],
-  [94000,95000,440,0,0,0,0,0,0,0],[95000,96000,490,0,0,0,0,0,0,0],
-  [96000,97000,540,0,0,0,0,0,0,0],[97000,98000,590,0,0,0,0,0,0,0],
-  [98000,99000,640,0,0,0,0,0,0,0],[99000,100000,685,0,0,0,0,0,0,0],
-  [100000,101000,735,0,0,0,0,0,0,0],[101000,102000,785,0,0,0,0,0,0,0],
-  [102000,103000,830,0,0,0,0,0,0,0],[103000,104000,880,0,0,0,0,0,0,0],
-  [104000,105000,930,0,0,0,0,0,0,0],[105000,106000,980,0,0,0,0,0,0,0],
-  [106000,107000,1030,0,0,0,0,0,0,0],[107000,108000,1080,0,0,0,0,0,0,0],
-  [108000,109000,1130,0,0,0,0,0,0,0],[109000,110000,1180,0,0,0,0,0,0,0],
-  [110000,111000,1230,0,0,0,0,0,0,0],[111000,112000,1270,0,0,0,0,0,0,0],
-  [112000,113000,1320,0,0,0,0,0,0,0],[113000,114000,1370,0,0,0,0,0,0,0],
-  [114000,115000,1420,0,0,0,0,0,0,0],[115000,116000,1470,0,0,0,0,0,0,0],
-  [116000,117000,1510,0,0,0,0,0,0,0],[117000,118000,1560,0,0,0,0,0,0,0],
-  [118000,119000,1610,0,0,0,0,0,0,0],[119000,120000,1660,0,0,0,0,0,0,0],
-  [120000,121000,1710,0,0,0,0,0,0,0],[121000,122000,1760,0,0,0,0,0,0,0],
-  [122000,123000,1800,0,0,0,0,0,0,0],[123000,124000,1850,0,0,0,0,0,0,0],
-  [124000,125000,1900,0,0,0,0,0,0,0],[125000,126000,1950,0,0,0,0,0,0,0],
-  [126000,127000,2000,0,0,0,0,0,0,0],[127000,128000,2040,0,0,0,0,0,0,0],
-  [128000,129000,2090,0,0,0,0,0,0,0],[129000,130000,2140,0,0,0,0,0,0,0],
-  [130000,131000,2190,0,0,0,0,0,0,0],[131000,132000,2240,130,0,0,0,0,0,0],
-  [132000,133000,2280,170,0,0,0,0,0,0],[133000,134000,2330,220,0,0,0,0,0,0],
-  [134000,135000,2380,270,0,0,0,0,0,0],[135000,136000,2430,320,0,0,0,0,0,0],
-  [136000,137000,2480,370,0,0,0,0,0,0],[137000,138000,2520,410,0,0,0,0,0,0],
-  [138000,139000,2570,460,0,0,0,0,0,0],[139000,140000,2620,510,0,0,0,0,0,0],
-  [140000,141000,2670,560,0,0,0,0,0,0],[141000,142000,2720,610,0,0,0,0,0,0],
-  [142000,143000,2760,650,0,0,0,0,0,0],[143000,144000,2810,700,0,0,0,0,0,0],
-  [144000,145000,2860,750,0,0,0,0,0,0],[145000,146000,2910,800,0,0,0,0,0,0],
-  [146000,147000,2960,850,0,0,0,0,0,0],[147000,148000,3000,890,0,0,0,0,0,0],
-  [148000,149000,3050,940,0,0,0,0,0,0],[149000,150000,3100,990,0,0,0,0,0,0],
-  [150000,152000,3190,1080,0,0,0,0,0,0],[152000,154000,3290,1180,170,0,0,0,0,0],
-  [154000,156000,3390,1280,270,0,0,0,0,0],[156000,158000,3490,1380,360,0,0,0,0,0],
-  [158000,160000,3580,1470,460,0,0,0,0,0],[160000,162000,3680,1570,560,0,0,0,0,0],
-  [162000,164000,3780,1670,650,0,0,0,0,0],[164000,166000,3880,1770,750,0,0,0,0,0],
-  [166000,168000,3970,1860,850,0,0,0,0,0],[168000,170000,4070,1960,950,0,0,0,0,0],
-  [170000,172000,4170,2060,1040,30,0,0,0,0],[172000,174000,4270,2160,1140,130,0,0,0,0],
-  [174000,176000,4360,2250,1240,230,0,0,0,0],[176000,178000,4460,2350,1340,320,0,0,0,0],
-  [178000,180000,4560,2450,1440,420,0,0,0,0],[180000,182000,4660,2550,1530,520,0,0,0,0],
-  [182000,184000,4760,2640,1630,620,0,0,0,0],[184000,186000,4850,2740,1730,720,0,0,0,0],
-  [186000,188000,4950,2840,1830,810,0,0,0,0],[188000,190000,5050,2940,1920,910,0,0,0,0],
-  [190000,192000,5150,3040,2020,1010,0,0,0,0],[192000,194000,5240,3130,2120,1110,90,0,0,0],
-  [194000,196000,5340,3230,2220,1200,190,0,0,0],[196000,198000,5440,3330,2320,1300,290,0,0,0],
-  [198000,200000,5540,3430,2410,1400,390,0,0,0],[200000,205000,5710,3600,2590,1570,560,0,0,0],
-  [205000,210000,5950,3840,2820,1810,800,0,0,0],[210000,215000,6180,4080,3060,2050,1030,20,0,0],
-  [215000,220000,6420,4310,3300,2280,1270,260,0,0],[220000,225000,6650,4550,3530,2520,1500,490,0,0],
-  [225000,230000,6890,4780,3770,2750,1740,720,0,0],[230000,235000,7120,5020,4000,2990,1970,960,0,0],
-  [235000,240000,7360,5250,4240,3220,2210,1190,180,0],[240000,245000,7590,5490,4470,3460,2440,1430,420,0],
-  [245000,250000,7830,5720,4710,3690,2680,1660,650,0],[250000,255000,8060,5960,4940,3930,2910,1900,880,0],
-  [255000,260000,8300,6190,5180,4160,3150,2130,1120,100],[260000,265000,8530,6430,5410,4400,3380,2370,1350,340],
-  [265000,270000,8770,6660,5650,4630,3620,2600,1590,570],[270000,275000,9000,6900,5880,4870,3850,2840,1820,810],
-  [275000,280000,9240,7130,6120,5100,4090,3070,2060,1040],[280000,285000,9470,7370,6350,5340,4320,3310,2290,1280],
-  [285000,290000,9710,7600,6590,5570,4560,3540,2530,1510],[290000,295000,9940,7840,6820,5810,4790,3780,2760,1750],
-  [295000,300000,10180,8070,7060,6040,5030,4010,3000,1980],[300000,305000,10410,8310,7290,6280,5260,4250,3230,2220],
-  [305000,310000,10650,8540,7530,6510,5500,4480,3470,2450],[310000,315000,10880,8780,7760,6750,5730,4720,3700,2690],
-  [315000,320000,11120,9010,8000,6980,5970,4950,3940,2920],[320000,325000,11350,9250,8230,7220,6200,5190,4170,3160],
-  [325000,330000,11590,9480,8470,7450,6440,5420,4410,3390],[330000,335000,11820,9720,8700,7690,6670,5660,4640,3630],
-  [335000,340000,12060,9950,8940,7920,6910,5890,4880,3860],[340000,345000,12290,10190,9170,8160,7140,6130,5110,4100],
-  [345000,350000,12530,10420,9410,8390,7380,6360,5350,4330],[350000,360000,12900,10800,9780,8760,7750,6730,5720,4700],
-  [360000,370000,13380,11270,10260,9240,8230,7210,6200,5180],[370000,380000,13850,11750,10730,9720,8700,7690,6670,5660],
-  [380000,390000,14330,12220,11210,10190,9180,8160,7150,6130],[390000,400000,14800,12700,11680,10670,9650,8640,7620,6610],
-  [400000,410000,15280,13170,12160,11140,10130,9110,8100,7080],[410000,420000,15750,13650,12630,11620,10600,9590,8570,7560],
-  [420000,430000,16230,14120,13110,12090,11080,10060,9050,8030],[430000,440000,16700,14600,13580,12570,11550,10540,9520,8510],
-  [440000,450000,17180,15070,14060,13040,12030,11010,10000,8980],[450000,460000,17650,15550,14530,13520,12500,11490,10470,9460],
-  [460000,470000,18130,16020,15010,13990,12980,11960,10950,9930],[470000,480000,18600,16500,15480,14470,13450,12440,11420,10410],
-  [480000,490000,19080,16970,15960,14940,13930,12910,11900,10880],[490000,500000,19550,17450,16430,15420,14400,13390,12370,11360],
-  [500000,520000,20270,18170,17150,16130,15120,14100,13090,12070],[520000,540000,21220,19120,18100,17080,16070,15050,14040,13020],
-  [540000,560000,22180,20070,19060,18040,17030,16010,15000,13980],[560000,580000,23130,21030,20010,18990,17980,16960,15950,14930],
-  [580000,600000,24080,21980,20960,19950,18930,17920,16900,15890],[600000,620000,25040,22930,21920,20900,19890,18870,17860,16840],
-  [620000,640000,25990,23880,22870,21850,20840,19820,18810,17790],[640000,660000,26940,24840,23820,22810,21790,20780,19760,18750],
-  [660000,680000,27900,25790,24780,23760,22750,21730,20720,19700],[680000,700000,28850,26750,25730,24720,23700,22690,21670,20660],
-  [700000,720000,29810,27700,26690,25670,24660,23640,22630,21610],[720000,740000,30760,28660,27640,26630,25610,24600,23580,22570],
-  [740000,760000,31720,29610,28600,27580,26570,25550,24540,23520],[760000,780000,32670,30570,29550,28540,27520,26510,25490,24480],
-  [780000,800000,33630,31520,30510,29490,28480,27460,26450,25430],[800000,820000,34580,32480,31460,30450,29430,28420,27400,26390],
-  [820000,840000,35540,33430,32420,31400,30390,29370,28360,27340],[840000,860000,36490,34390,33370,32360,31340,30330,29310,28300],
-  [860000,880000,37450,35340,34330,33310,32300,31280,30270,29250],[880000,900000,38400,36300,35280,34270,33250,32240,31220,30210],
-  [900000,920000,39360,37250,36240,35220,34210,33190,32180,31160],[920000,940000,40310,38210,37190,36180,35160,34150,33130,32120],
-  [940000,960000,41270,39160,38150,37130,36120,35100,34090,33070],[960000,980000,42220,40120,39100,38090,37070,36060,35040,34030],
-  [980000,1000000,43180,41070,40060,39040,38030,37010,36000,34980],
-];
-
 const getGensenTax = (taxBase: number, dependents: number): number => {
-  const dep = Math.min(Math.max(0, dependents), 7);
-  if (taxBase >= 1000000) {
-    const over = taxBase - 1000000;
-    const base = 43180 + Math.floor(over * 0.45);
-    const ded  = [0,2110,4140,6180,8210,10250,12280,14320][dep];
-    return Math.max(0, base - ded);
-  }
-  for (const row of GENSEN) {
-    const [lo, hi, ...taxes] = row;
-    if (taxBase >= lo && taxBase < hi) return taxes[dep] ?? 0;
-  }
-  return 0;
+    const dep = Math.min(Math.max(0, dependents), 7);
+    if (taxBase >= 1000000) {
+        const over = taxBase - 1000000;
+        const base = 43180 + Math.floor(over * 0.45);
+        const ded  = [0,2110,4140,6180,8210,10250,12280,14320][dep];
+        return Math.max(0, base - ded);
+    }
+    for (const row of Master.GENSEN_TAX_TABLE) {
+        const [lo, hi, ...taxes] = row;
+        if (taxBase >= lo && taxBase < hi) return taxes[dep] ?? 0;
+    }
+    return 0;
 };
 
 // ═══════════════════════════════════════════════════════════
 // 4. 介護保険 対象判定（40歳以上65歳未満）
 // ═══════════════════════════════════════════════════════════
 export const checkNursingCare = (birthday: string, year: number, month: number): boolean => {
-  if (!birthday) return false;
-  const b = new Date(birthday);
-  const reach40 = new Date(b.getFullYear() + 40, b.getMonth(), b.getDate() - 1);
-  const reach65 = new Date(b.getFullYear() + 65, b.getMonth(), b.getDate() - 1);
-  const target  = new Date(year, month - 1, 1);
-  return (
-    target >= new Date(reach40.getFullYear(), reach40.getMonth(), 1) &&
-    target <  new Date(reach65.getFullYear(), reach65.getMonth(), 1)
-  );
+    if (!birthday) return false;
+    const b = new Date(birthday);
+    const reach40 = new Date(b.getFullYear() + 40, b.getMonth(), b.getDate() - 1);
+    const reach65 = new Date(b.getFullYear() + 65, b.getMonth(), b.getDate() - 1);
+    const target  = new Date(year, month - 1, 1);
+    return (
+        target >= new Date(reach40.getFullYear(), reach40.getMonth(), 1) &&
+        target <  new Date(reach65.getFullYear(), reach65.getMonth(), 1)
+    );
 };
 
 // ═══════════════════════════════════════════════════════════
 // 5. メイン: calculateSalary
 // ═══════════════════════════════════════════════════════════
 export const calculateSalary = (
-  staff: any,
-  attendanceData: any[],
-  extras: SalaryExtras,
-  targetYear: number,
-  targetMonth: number,
+    staff: any,
+    attendanceData: any[],
+    extras: SalaryExtras,
+    targetYear: number,
+    targetMonth: number,
+    companySettings: any, // 👈 引数に追加
 ): SalaryResult => {
 
-  // ── 勤怠集計 ──────────────────────────────────────────────
-  const workDays = attendanceData.length;
-  let totalWorkHours = 0, totalNightHours = 0, totalOvertimeHours = 0;
-  let basePay = 0, overtime25Pay = 0, overtime50Pay = 0, nightPay = 0;
-  let absenceDeduction = 0;
+    // ── 勤怠集計 ──────────────────────────────────────────────
+    const workDays = attendanceData.length;
+    let totalWorkHours = 0, totalNightHours = 0, totalOvertimeHours = 0;
+    let basePay = 0, overtime25Pay = 0, overtime50Pay = 0, nightPay = 0;
+    let absenceDeduction = 0;
 
-  if (staff.wage_type === 'monthly') {
-    // 月給制: 残業単価 = 月給 ÷ 月の所定労働時間
-    const monthlyWage = Number(staff.hourly_wage) || 0;
+    if (staff.wage_type === 'monthly') {
+        // ── 1. 基本給を固定（ループの外で1回だけ！） ──
+        const monthlyWage = Number(staff.base_wage) || 0;
+        basePay = monthlyWage; 
 
-    // 月の所定労働時間（平日 × 所定時間 or スタッフ設定値）
-    const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
-    let weekends = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dow = new Date(targetYear, targetMonth - 1, d).getDay();
-      if (dow === 0 || dow === 6) weekends++;
+        // ── 2. 単価計算（残業代と欠勤控除のためだけに計算） ──
+        const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+        let weekends = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dow = new Date(targetYear, targetMonth - 1, d).getDay();
+            if (dow === 0 || dow === 6) weekends++;
+        }
+        
+        // 所定日数（設定があればそれ、なければ平日の数）
+        const prescribedDays  = Number(staff.monthly_work_days) || (daysInMonth - weekends);
+        const scheduledHours  = Number(staff.scheduled_work_hours) || 8;
+        
+        // 時給単価 = 月給 / (所定日数 * 1日の所定時間)
+        const hourlyRate = (prescribedDays > 0 && scheduledHours > 0) 
+            ? monthlyWage / (prescribedDays * scheduledHours) 
+            : 0;
+
+        // ── 3. 欠勤控除の計算（月給制の大事な「引き算」） ──
+        const absentDays = Math.max(0, prescribedDays - workDays);
+        absenceDeduction = absentDays > 0
+            ? Math.floor((monthlyWage / prescribedDays) * absentDays)
+            : 0;
+
+        // ── 4. 勤怠ループ（ここでは「足し算」のための集計だけする） ──
+        attendanceData.forEach(row => {
+            const h = Number(row.work_hours) || 0;
+            const n = Number(row.night_hours) || 0;
+            
+            totalWorkHours += h; 
+            totalNightHours += n;
+
+            // 残業代の「足し算」
+            const dayOvertime = Math.max(0, h - scheduledHours);
+            if (dayOvertime > 0) {
+                const canFitIn25 = Math.max(0, Math.min(dayOvertime, 60 - totalOvertimeHours));
+                const over60 = Math.max(0, dayOvertime - canFitIn25);
+                
+                overtime25Pay += hourlyRate * 1.25 * canFitIn25;
+                overtime50Pay += hourlyRate * 1.50 * over60;
+                totalOvertimeHours += dayOvertime;
+            }
+
+            // 深夜手当の「足し算」
+            if (n > 0) {
+                nightPay += hourlyRate * 0.25 * n;
+            }
+        });
+
+        // 🟢 【重要】このブロック内では `basePay += ...` という加算は一切行わない！
+
+    } else {
+        // --- 時給制のロジック ---
+        attendanceData.forEach(row => {
+            const h = Number(row.work_hours) || 0;
+            const n = Number(row.night_hours) || 0;
+            const wage = Number(row.actual_base_wage) || Number(staff.base_wage) || 0;
+
+            totalWorkHours += h;
+            totalNightHours += n;
+
+            // 時給制の場合は、ここで「時間 × 時給」を積み上げる
+            basePay += wage * h;
+
+            const dayOvertime = Math.max(0, h - 8);
+            if (dayOvertime > 0) {
+                const canFitIn25 = Math.max(0, Math.min(dayOvertime, 60 - totalOvertimeHours));
+                const over60 = Math.max(0, dayOvertime - canFitIn25);
+                overtime25Pay += wage * 0.25 * canFitIn25; // 割増分のみ
+                overtime50Pay += wage * 0.50 * over60;    // 割増分のみ
+                totalOvertimeHours += dayOvertime;
+            }
+            if (n > 0) {
+                nightPay += wage * 0.25 * n;
+            }
+        });
     }
-    const prescribedDays  = Number(staff.monthly_work_days)   || (daysInMonth - weekends);
-    const scheduledHours  = Number(staff.scheduled_work_hours) || 8;
-    const prescribedTotal = prescribedDays * scheduledHours;
-    const hourlyRate = prescribedTotal > 0 ? monthlyWage / prescribedTotal : 0;
 
-    // 欠勤控除：（月給 ÷ 所定労働日数） × 欠勤日数
-    // 欠勤日数 = 所定日数 - 実出勤日数
-    const absentDays = Math.max(0, prescribedDays - workDays);
-    absenceDeduction = absentDays > 0
-      ? Math.floor((monthlyWage / prescribedDays) * absentDays)
-      : 0;
-    basePay = monthlyWage - absenceDeduction;
+    // ── 通勤手当・任意手当 ──────────────────────────────────────
+    const commutePay = staff.commute_type === 'daily'   ? (Number(staff.commute_amount) || 0) * workDays
+                    : staff.commute_type === 'monthly' ? (Number(staff.commute_amount) || 0) : 0;
+    const allowanceAmount = Number(extras.allowanceAmount) || 0;
 
-    attendanceData.forEach(row => {
-      const h = Number(row.work_hours) || 0;
-      const n = Number(row.night_hours) || 0;
-      totalWorkHours += h; totalNightHours += n;
-      let rem = Math.max(0, h - scheduledHours); // 所定時間超を残業とする
-      while (rem > 0.0099) {
-        const c = Math.min(rem, 0.01);
-        totalOvertimeHours < 60 ? (overtime25Pay += hourlyRate * 1.25 * c) : (overtime50Pay += hourlyRate * 1.50 * c);
-        totalOvertimeHours += c; rem -= c;
-      }
-      nightPay += hourlyRate * 0.25 * n;
-    });
+    // ── カスタム項目の集計 ─────────────────────────────────────
+    const customItems = extras.customItems ?? [];
+    const customEarnings   = customItems.filter(i => i.type === 'earning')  .reduce((s, i) => s + i.amount, 0);
+    const customDeductions = customItems.filter(i => i.type === 'deduction').reduce((s, i) => s + i.amount, 0);
 
-  } else {
-    // 時給制
-    attendanceData.forEach(row => {
-      const h    = Number(row.work_hours) || 0;
-      const n    = Number(row.night_hours) || 0;
-      const wage = Number(row.actual_hourly_wage) || Number(staff.hourly_wage) || 0;
-      totalWorkHours += h; totalNightHours += n;
-      let rem = Math.max(0, h - 8);
-      while (rem > 0.0099) {
-        const c = Math.min(rem, 0.01);
-        totalOvertimeHours < 60 ? (overtime25Pay += wage * 0.25 * c) : (overtime50Pay += wage * 0.50 * c);
-        totalOvertimeHours += c; rem -= c;
-      }
-      basePay  += wage * h;
-      nightPay += wage * 0.25 * n;
-    });
-  }
+    // ── 支給合計の計算 ──────────────────────────────────────────────
+    // 残業代・深夜手当などの「割増賃金」の合計に対して設定を適用
+    const premiums = overtime25Pay + overtime50Pay + nightPay;
+    const roundedPremiums = applyRounding(premiums, companySettings.round_overtime || 'round');
 
-  // ── 通勤手当・任意手当 ──────────────────────────────────────
-  const commutePay = staff.commute_type === 'daily'   ? (Number(staff.commute_wage) || 0) * workDays
-                   : staff.commute_type === 'monthly' ? (Number(staff.commute_wage) || 0) : 0;
-  const allowanceAmount = Number(extras.allowanceAmount) || 0;
+    // 支給合計 = 基本給(満額) - 欠勤控除 + 割増賃金 + 諸手当
+    const totalEarnings = Math.floor(basePay) 
+                        - absenceDeduction // ★ ここで初めて引く
+                        + roundedPremiums 
+                        + commutePay 
+                        + allowanceAmount 
+                        + customEarnings;
 
-  // ── カスタム項目の集計 ─────────────────────────────────────
-  const customItems = extras.customItems ?? [];
-  const customEarnings   = customItems.filter(i => i.type === 'earning')  .reduce((s, i) => s + i.amount, 0);
-  const customDeductions = customItems.filter(i => i.type === 'deduction').reduce((s, i) => s + i.amount, 0);
+    // ── 社会保険料（標準報酬月額ベース） ────────────────────────
+    const dbHyojun = Number(staff.standard_remuneration) || 0;
+    let hyojunHoshu: number;
 
-  // ── 支給合計 ──────────────────────────────────────────────
-  const totalEarnings = Math.ceil(basePay + overtime25Pay + overtime50Pay + nightPay)
-                      + commutePay + allowanceAmount + customEarnings;
+    if (dbHyojun > 0) {
+        hyojunHoshu = dbHyojun;
+    } else {
+        // 標準報酬月額を判定するための報酬額（ここは法的に「円未満切り捨て」が一般的）
+        const reportable = Math.floor(basePay + overtime25Pay + overtime50Pay + nightPay + commutePay);
+        hyojunHoshu = getHyojunHoshu(reportable);
+    }
 
-  // ── 社会保険料（標準報酬月額ベース） ────────────────────────
-  const reportable  = Math.ceil(basePay + overtime25Pay + overtime50Pay + nightPay + commutePay);
-  const hyojunHoshu = getHyojunHoshu(reportable);
-  const rates       = KENPO[extras.prefecture] ?? KENPO["東京"];
-  const nursingTarget = checkNursingCare(staff.birthday || '', targetYear, targetMonth);
+    const rates = Master.KENPO_RATES[extras.prefecture] ?? Master.KENPO_RATES["東京"];
+    const nursingTarget = checkNursingCare(staff.birthday || '', targetYear, targetMonth);
 
-  const healthRate       = nursingTarget ? rates[1] : rates[0];
-  const nursingRate      = nursingTarget ? (rates[1] - rates[0]) : 0;
-  const healthTotal      = Math.floor(hyojunHoshu * healthRate  / 100);
-  const nursingInsurance = Math.floor(hyojunHoshu * nursingRate / 100);
-  const healthInsurance  = healthTotal - nursingInsurance;
-  const welfarePension   = Math.floor(hyojunHoshu * PENSION_RATE / 100);
-  const empInsurance     = Math.round(totalEarnings * EMP_INS_RATE);
+    const healthRate  = nursingTarget ? rates[1] : rates[0];
+    const nursingRate = nursingTarget ? (rates[1] - rates[0]) : 0;
+  
+    // 社会保険料の端数設定（デフォルトは切り捨て）
+    const sInsType = companySettings.round_social_ins || 'floor';
 
-  // ── 所得税（社保控除後） ─────────────────────────────────────
-  const socialTotal = healthInsurance + nursingInsurance + welfarePension + empInsurance;
-  const incomeTax   = getGensenTax(Math.max(0, totalEarnings - socialTotal), Number(extras.dependents) || 0);
+    const healthHyojun = Math.min(hyojunHoshu, Master.KENPO_MAX_HYOJUN);
+    const healthTotal      = applyRounding(healthHyojun * healthRate  / 100, sInsType);
+    const nursingInsurance = applyRounding(healthHyojun * nursingRate / 100, sInsType);
+    const healthInsurance  = healthTotal - nursingInsurance;
 
-  const residentTax     = Number(extras.residentTax) || 0;
-  const totalDeductions = healthInsurance + nursingInsurance + welfarePension
-                        + empInsurance + incomeTax + residentTax + customDeductions;
+    const pensionHyojun = Math.max(Master.PENSION_MIN_HYOJUN, Math.min(hyojunHoshu, Master.PENSION_MAX_HYOJUN));
+    const welfarePension = applyRounding(pensionHyojun * Master.PENSION_RATE / 100, sInsType);
+  
+    // 雇用保険（雇用保険用の端数設定を適用：デフォルトは四捨五入）
+    const empInsurance = applyRounding(
+        totalEarnings * Master.EMP_INS_RATE, 
+        companySettings.round_emp_ins || 'round'
+    );
 
-  return {
-    workDays, totalWorkHours, totalOvertimeHours, totalNightHours,
-    basePay: Math.ceil(basePay), absenceDeduction,
-    overtime25Pay: Math.ceil(overtime25Pay),
-    overtime50Pay: Math.ceil(overtime50Pay),
-    nightPay: Math.ceil(nightPay),
-    commutePay, allowanceAmount, customEarnings, totalEarnings,
-    healthInsurance, nursingInsurance, welfarePension,
-    empInsurance, incomeTax, residentTax, customDeductions,
-    totalDeductions, netPay: totalEarnings - totalDeductions,
-    isNursingCareTarget: nursingTarget, hyojunHoshu,
-  };
+    // ── 税金・控除合計 ─────────────────────────────────────
+    const socialTotal = healthInsurance + nursingInsurance + welfarePension + empInsurance;
+    const incomeTax   = getGensenTax(Math.max(0, totalEarnings - socialTotal), Number(extras.dependents) || 0);
+
+    const residentTax     = Number(extras.residentTax) || 0;
+    const totalDeductions = healthInsurance + nursingInsurance + welfarePension
+                            + empInsurance + incomeTax + residentTax + customDeductions;
+
+    return {
+        workDays, totalWorkHours, totalOvertimeHours, totalNightHours,
+        // 返却値の端数も整えておく
+        basePay: Math.floor(basePay), 
+        absenceDeduction,
+        overtime25Pay: Math.floor(overtime25Pay),
+        overtime50Pay: Math.floor(overtime50Pay),
+        nightPay: Math.floor(nightPay),
+        commutePay, allowanceAmount, customEarnings, totalEarnings,
+        healthInsurance, nursingInsurance, welfarePension,
+        empInsurance, incomeTax, residentTax, customDeductions,
+        totalDeductions, netPay: totalEarnings - totalDeductions,
+        isNursingCareTarget: nursingTarget, hyojunHoshu,
+    };
 };

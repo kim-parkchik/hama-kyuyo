@@ -2,6 +2,29 @@ import React, { useState, useEffect } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
 import { modernIconBtnStyle, fetchAddressByZip } from "./utils"; // 👈 utilsからインポート
+import * as Master from './constants/salaryMaster2026';
+
+// 選択肢用の定数を作成
+export const HYOJUN_OPTIONS = Master.HYOJUN_TABLE.map(([lo, hi, std], index) => {
+    let range = "";
+
+    if (index === 0) {
+        // 第1級の場合
+        range = `${hi.toLocaleString()}円未満`;
+    } else if (hi === Infinity) {
+        // 最高等級の場合
+        range = `${lo.toLocaleString()}円〜`;
+    } else {
+        // 通常の等級
+        range = `${lo.toLocaleString()}円 〜 ${hi.toLocaleString()}円未満`;
+    }
+
+    return {
+        // label: `${index + 1}級：${std.toLocaleString()}円 (${range})`,
+        label: `${String(index + 1).padStart(2, '0')}級：${std.toLocaleString().padStart(9)}円 (${range})`,
+        value: std
+    };
+});
 
 interface Props {
     db: Database;
@@ -39,6 +62,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
     const [targetWageType, setTargetWageType] = useState("hourly");
     const [targetDependents, setTargetDependents] = useState(0);
     const [targetResidentTax, setTargetResidentTax] = useState(0);
+    const [targetStandardRemuneration, setTargetStandardRemuneration] = useState(0);
 
     const [branches, setBranches] = useState<any[]>([]);
     const [targetBranchId, setTargetBranchId] = useState(1); // 1（本店）をデフォルトに
@@ -175,6 +199,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
         setTargetStatus("active"); // 🆕
         setTargetZip(""); setTargetAddress(""); setTargetPhone(""); setTargetMobile(""); setTargetCommuteWage(0);
         setTargetBranchId(1); setTargetDependents(0); setTargetResidentTax(0);
+        setTargetStandardRemuneration(0); // 🆕 追加
         setEditingId(null);
     };
 
@@ -192,18 +217,20 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
         setTargetAddress(s.address || "");
         setTargetPhone(s.phone || ""); // 👈 追加
         setTargetMobile(s.mobile || ""); // 👈 追加
-        setTargetWage(s.hourly_wage);
+        setTargetWage(s.base_wage);
         setTargetCommuteType(s.commute_type);
-        setTargetCommuteWage(s.commute_wage);
+        setTargetCommuteWage(s.commute_amount);
         setTargetWageType(s.wage_type || "hourly");
-        setTargetPatternId(s.calendar_pattern_id || 1); // パターンIDをセット
-        const h = Math.floor(s.daily_working_hours || 8); // 小数点以下切り捨て
-        const m = Math.round(((s.daily_working_hours || 8) - h) * 60); // 残りを分に変換
+        setTargetPatternId(s.calendar_pattern_id || 1);
+        const hoursVal = s.scheduled_work_hours || 8; 
+        const h = Math.floor(hoursVal);
+        const m = Math.round((hoursVal - h) * 60);
         setTargetHours(h);
         setTargetMinutes(m);
         setTargetBranchId(s.branch_id || 1);
-        setTargetDependents(s.dependents_count || 0);
+        setTargetDependents(s.dependents || 0);
         setTargetResidentTax(s.resident_tax || 0);
+        setTargetStandardRemuneration(s.standard_remuneration || 0); // 🆕 追加
         setShowForm(true);
     };
 
@@ -224,7 +251,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
             String(targetWageType) !== String(original.wage_type || "hourly") ||
             String(targetName) !== String(original.name) ||
             String(targetFurigana) !== String(original.furigana || "") ||
-            Number(targetWage) !== Number(original.hourly_wage) ||
+            Number(targetWage) !== Number(original.base_wage) ||
             String(targetBirthday) !== String(original.birthday || "") ||
             String(targetJoinDate) !== String(original.join_date || "") ||
             String(targetZip) !== String(original.zip_code || "") ||
@@ -232,10 +259,12 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
             String(targetPhone) !== String(original.phone || "") || // 👈 追加
             String(targetMobile) !== String(original.mobile || "") || // 👈 追加
             String(targetCommuteType) !== String(original.commute_type) ||
-            Number(targetCommuteWage) !== Number(original.commute_wage) ||
+            Number(targetCommuteWage) !== Number(original.commute_amount) ||
             Number(targetBranchId) !== Number(original.branch_id || 1) ||
-            Number(targetDependents) !== Number(original.dependents_count || 0) ||
-            Number(targetResidentTax) !== Number(original.resident_tax || 0)
+            Number(targetDependents) !== Number(original.dependents || 0) ||
+            Number(targetResidentTax) !== Number(original.resident_tax || 0) ||
+            Number(targetDailyHours) !== Number(original.scheduled_work_hours || 8) || // 👈 追加・修正
+            Number(targetStandardRemuneration) !== Number(original.standard_remuneration || 0)
         );
     };
 
@@ -256,7 +285,8 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                 targetCommuteType, Number(targetCommuteWage), Number(targetBranchId), 
                 Number(targetDependents), Number(targetResidentTax), 
                 targetPatternId, 
-                targetDailyHours, // 👈 これを追加
+                targetDailyHours,
+                Number(targetStandardRemuneration),
                 safeId
             ];
 
@@ -265,10 +295,11 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                     `UPDATE staff SET 
                         name=?, furigana=?, birthday=?, join_date=?, 
                         retirement_date=?, status=?, zip_code=?, address=?, 
-                        phone=?, mobile=?, wage_type=?, hourly_wage=?, 
-                        commute_type=?, commute_wage=?, branch_id=?, 
-                        dependents_count=?, resident_tax=?, calendar_pattern_id=?,
-                        scheduled_work_hours=? -- 👈 カラム名に合わせて追加
+                        phone=?, mobile=?, wage_type=?, base_wage=?, 
+                        commute_type=?, commute_amount=?, branch_id=?, 
+                        dependents=?, resident_tax=?, calendar_pattern_id=?,
+                        scheduled_work_hours=?,
+                        standard_remuneration=?
                     WHERE id=?`,
                     params
                 );
@@ -277,12 +308,13 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                     `INSERT INTO staff (
                         name, furigana, birthday, join_date, 
                         retirement_date, status, zip_code, address, 
-                        phone, mobile, wage_type, hourly_wage, 
-                        commute_type, commute_wage, branch_id, 
-                        dependents_count, resident_tax, calendar_pattern_id,
-                        scheduled_work_hours, -- 👈 カラム名に合わせて追加
+                        phone, mobile, wage_type, base_wage, 
+                        commute_type, commute_amount, branch_id, 
+                        dependents, resident_tax, calendar_pattern_id,
+                        scheduled_work_hours,
+                        standard_remuneration,
                         id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     params
                 );
             }
@@ -525,6 +557,30 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                                         <label style={labelStyle}>住民税額（月額）</label>
                                         <input type="number" value={targetResidentTax} onChange={e => setTargetResidentTax(Number(e.target.value))} style={inputStyle} />
                                     </div>
+                                    <div style={{ gridColumn: "span 2" }}>
+                                        <label style={labelStyle}>標準報酬月額（社会保険計算用）</label>
+                                        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                            <select
+                                                // 修正ポイント1: 他の項目に合わせて targetStandardRemuneration (などの state) を使う
+                                                // もし state を作っていない場合は、このコンポーネントの流儀に合わせて追加が必要です
+                                                value={targetStandardRemuneration} 
+                                                onChange={(e) => setTargetStandardRemuneration(Number(e.target.value))}
+                                                // 修正ポイント2: 他の項目と同じ inputStyle を適用
+                                                style={{ ...inputStyle, paddingRight: "30px" }} 
+                                            >
+                                                <option value={0}>--- 自動計算（未確定） ---</option>
+                                                {HYOJUN_OPTIONS.map(opt => (
+                                                    <option key={opt.value} value={opt.value}>
+                                                        {opt.label}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <span style={{ position: "absolute", right: "12px", fontSize: "12px", color: "#7f8c8d", pointerEvents: "none" }}>円</span>
+                                        </div>
+                                        <p style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
+                                            ※決定通知書に記載されている等級の金額を選択してください。
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -619,7 +675,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                                             {branch ? branch.name : "---"}
                                         </div>
                                     </td>
-                                    <td style={tdStyle}>{s.wage_type === "monthly" ? "月給" : "時給"} {s.hourly_wage.toLocaleString()}円</td>
+                                    <td style={tdStyle}>{s.wage_type === "monthly" ? "月給" : "時給"} {s.base_wage.toLocaleString()}円</td>
                                     <td style={{ ...tdStyle, textAlign: "center" }}>
                                         {deletingId === s.id ? (
                                             <div style={{ display: "flex", gap: "5px", justifyContent: "center" }}>

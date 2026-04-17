@@ -119,3 +119,60 @@ export const smallBtnStyle = (color: string) => ({
     lineHeight: "1",
     minWidth: "40px"    // 最小幅を固定
 });
+
+// 端数処理ヘルパー
+export const applyRounding = (value: number, type: string) => {
+    switch (type) {
+        case 'floor': return Math.floor(value); // 切り捨て
+        case 'ceil':  return Math.ceil(value);  // 切り上げ
+        case 'round': return Math.round(value); // 四捨五入
+        default:      return Math.floor(value);
+    }
+};
+
+// utils.ts に追加
+export const generateAttendanceCSV = (data: any[]) => {
+    const header = ["スタッフID", "名前", "日付", "出勤", "退勤", "休憩開始", "休憩終了", "外出", "戻り", "実働", "深夜"];
+    const rows = data.map(row => [
+        row.staff_id,
+        row.staff_name,
+        row.work_date,
+        row.entry_time,
+        row.exit_time,
+        row.break_start,
+        row.break_end,
+        row.out_time,
+        row.return_time,
+        row.work_hours,
+        row.night_hours
+    ]);
+
+    // BOM付きでExcel文字化けを防止
+    return "\uFEFF" + [header, ...rows].map(e => e.map(v => `"${v}"`).join(",")).join("\n");
+};
+
+export const parseAttendanceCSV = (csvText: string) => {
+    // 1. 文頭のBOMを削除し、改行で分割
+    const cleanText = csvText.replace(/^\uFEFF/, ''); 
+    const lines = cleanText.trim().split(/\r?\n/);
+    if (lines.length < 2) return [];
+
+    // 2. ヘッダーを取得し、ダブルクォーテーションと前後の空白を徹底除去
+    const headers = lines[0].split(',').map(h => 
+        h.replace(/^["']|["']$/g, '').trim()
+    );
+
+    // 3. データ行をオブジェクトに変換
+    return lines.slice(1).map(line => {
+        // カンマ分割（引用符内のカンマを考慮）
+        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => 
+            v.replace(/^["']|["']$/g, '').trim() // 前後の引用符を消す
+        );
+
+        const row: any = {};
+        headers.forEach((header, index) => {
+            row[header] = values[index] || "";
+        });
+        return row;
+    });
+};

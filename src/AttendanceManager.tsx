@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-// import { calcDiff, modernIconBtnStyle, formatHours } from "./utils";
-// import { calcDiff, smallBtnStyle, formatHours } from "./utils";
-import { calcDetailedDiff, modernIconBtnStyle, formatHours } from "./utils";
+// 🆕 calculateSalary を追加（ファイルパスは作成した場所に合わせて調整してください）
+import { calcDetailedDiff, modernIconBtnStyle, formatHours, generateAttendanceCSV, parseAttendanceCSV } from "./utils";
+import { calculateSalary } from "./calcSalary";
 
 // 将来的にDBから読み込む設定値（関数の外でも内でも良いですが、まずはここでOK）
 const PAYROLL_SETTINGS = {
@@ -13,12 +13,11 @@ const PAYROLL_SETTINGS = {
 function TimeInputPair({ value, onChange }: { value: string, onChange: (val: string) => void }) {
     const [h, m] = (value || ":").split(":");
 
-    // 共通のクリーンアップ処理
     const formatInput = (val: string) => {
         return val
             .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
             .replace(/[^0-9]/g, "")
-            .slice(0, 2);
+            // sliceはせず、後のバリデーションで弾く
     };
 
     const handleInputChange = (newVal: string, otherPart: string, isHours: boolean) => {
@@ -36,7 +35,7 @@ function TimeInputPair({ value, onChange }: { value: string, onChange: (val: str
     };
 
     const inputStyle = {
-        width: "22px",
+        width: "32px", // 🆕 少し広げて3桁近くになっても大丈夫なように
         border: "none",
         outline: "none",
         textAlign: "center" as const,
@@ -117,8 +116,117 @@ export default function AttendanceManager({
 }: AttendanceManagerProps) {
     const [selectedStaffId, setSelectedStaffId] = useState("");
     const [monthlyWorkData, setMonthlyWorkData] = useState<Record<string, any>>({});
+    const [companySettings, setCompanySettings] = useState<any>(null);
+    const [branchPrefecture, setBranchPrefecture] = useState<string>("東京");
 
-    // --- (中略：loadMonthlyData, saveAttendance などの関数はそのまま) ---
+    const handleExportCSV = async () => {
+        if (!db) return;
+        
+        // YYYY-MM- の形式を作成
+        const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-`;
+        
+        try {
+            // 1. DBからその月の全スタッフデータを取得
+            const data = await db.select(`
+                SELECT a.*, s.name as staff_name 
+                FROM attendance a
+                JOIN staff s ON a.staff_id = s.id
+                WHERE a.work_date LIKE ?
+                ORDER BY a.staff_id, a.work_date
+            `, [`${monthStr}%`]) as any[];
+
+            if (!data || data.length === 0) {
+                alert("出力するデータがありません。");
+                return;
+            }
+
+            // 2. utilsの関数でCSV文字列に変換
+            const csvContent = generateAttendanceCSV(data);
+            
+            // 3. ブラウザにダウンロードさせる
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `勤怠データ_${targetYear}年${targetMonth}月.csv`;
+            link.click();
+            
+            // メモリ解放
+            URL.revokeObjectURL(url);
+            
+        } catch (e) {
+            console.error("CSV出力エラー:", e);
+            alert("エクスポート中にエラーが発生しました。");
+        }
+    };
+
+    const handleImportCSV = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.csv';
+
+        input.onchange = async (e: any) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const text = event.target?.result as string;
+                    const rows = parseAttendanceCSV(text);
+                    
+                    console.log(`${rows.length}件のインポートを開始します...`);
+
+                    for (const row of rows) {
+                        console.log("Row Object:", row);
+
+                        const sId = row["スタッフID"];
+                        const date = row["日付"];
+                        
+                        if (!sId || !date) {
+                            console.warn("スキップ：スタッフIDまたは日付がありません", row);
+                            continue;
+                        }
+
+                        // 🆕 ここを追加！ スタッフ情報を特定する
+                        const staff = staffList.find(s => String(s.id) === String(sId));
+                        if (!staff) {
+                            console.warn(`スキップ：ID ${sId} のスタッフがマスタに存在しません`);
+                            continue;
+                        }
+
+                        const { total, night } = calcDetailedDiff(
+                            row["出勤"], row["退勤"], row["休憩開始"], row["休憩終了"], row["外出"], row["戻り"]
+                        );
+
+                        await db.execute("DELETE FROM attendance WHERE staff_id = ? AND work_date = ?", [sId, date]);
+                        await db.execute(
+                            `INSERT INTO attendance (
+                                staff_id, work_date, entry_time, exit_time, 
+                                break_start, break_end, out_time, return_time, 
+                                work_hours, night_hours,
+                                actual_base_wage, overtime_rate, night_rate
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                            [
+                                sId, date, row["出勤"] || "", row["退勤"] || "", 
+                                row["休憩開始"] || "", row["休憩終了"] || "", 
+                                row["外出"] || "", row["戻り"] || "", 
+                                Number(total), Number(night), 
+                                staff.base_wage, 1.25, 0.25 // staff が見つかっていればOK
+                            ]
+                        );
+                    }
+                    console.log("インポートが完了しました。画面を更新します。");
+                    loadMonthlyData(); 
+                } catch (err) {
+                    console.error("エラー:", err);
+                }
+            };
+            reader.readAsText(file);
+        };
+        input.click();
+    };
+
     const loadMonthlyData = async () => {
         if (!db || !selectedStaffId) {
             setMonthlyWorkData({});
@@ -126,29 +234,55 @@ export default function AttendanceManager({
         }
         const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-`;
         try {
-            const res = await db.select<any[]>(
+            // 1. 会社設定の取得（型アサーションを外出しして安定させる）
+            const configData = await db.select("SELECT * FROM company WHERE id = 1") as any[];
+            if (configData && configData.length > 0) {
+                setCompanySettings(configData[0]);
+            }
+
+            // 1b. スタッフの拠点都道府県を取得（健保料率計算用）
+            const staffForBranch = staffList?.find(s => String(s.id) === String(selectedStaffId));
+            if (staffForBranch?.branch_id) {
+                const branchData = await db.select(
+                    "SELECT prefecture FROM branches WHERE id = ?",
+                    [staffForBranch.branch_id]
+                ) as any[];
+                if (branchData?.[0]?.prefecture) {
+                    setBranchPrefecture(branchData[0].prefecture.replace(/[都道府県]$/, "") || "東京");
+                }
+            }
+
+            // 2. 勤怠データの取得
+            const attendanceData = await db.select(
                 "SELECT * FROM attendance WHERE staff_id = ? AND work_date LIKE ?",
                 [selectedStaffId, `${monthStr}%`]
-            );
+            ) as any[];
+
             const loaded: Record<string, any> = {};
-            res.forEach(row => {
-                loaded[row.work_date] = { 
-                    in: row.entry_time || "", 
-                    out: row.exit_time || "", 
-                    bStart: row.break_start || "", 
-                    bEnd: row.break_end || "",
-                    outTime: row.out_time || "",
-                    returnTime: row.return_time || "",
-                    isSaved: true,
-                    savedHours: Number(row.work_hours) || 0,
-                    nightHours: Number(row.night_hours) || 0,
-                    actual_hourly_wage: row.actual_hourly_wage || 0,
-                    overtime_rate: row.overtime_rate || 1.25,
-                    night_rate: row.night_rate || 0.25
-                };
-            });
+            
+            // 配列であることを確認してからループ（VSCodeのエラー避け）
+            if (Array.isArray(attendanceData)) {
+                attendanceData.forEach(row => {
+                    loaded[row.work_date] = { 
+                        in: row.entry_time || "", 
+                        out: row.exit_time || "", 
+                        bStart: row.break_start || "", 
+                        bEnd: row.break_end || "",
+                        outTime: row.out_time || "",
+                        returnTime: row.return_time || "",
+                        isSaved: true,
+                        savedHours: Number(row.work_hours) || 0,
+                        nightHours: Number(row.night_hours) || 0,
+                        actual_base_wage: row.actual_base_wage || 0,
+                        overtime_rate: row.overtime_rate || 1.25,
+                        night_rate: row.night_rate || 0.25
+                    };
+                });
+            }
             setMonthlyWorkData(loaded);
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error("データ読み込みエラー:", e); 
+        }
     };
 
     useEffect(() => { loadMonthlyData(); }, [selectedStaffId, targetYear, targetMonth, db]);
@@ -177,6 +311,20 @@ export default function AttendanceManager({
         const currentStaff = staffList?.find(s => String(s.id) === String(selectedStaffId));
         if (!row || !currentStaff) return;
 
+        // --- 🆕 48時間上限バリデーション ---
+        const isOver48 = (timeStr: string) => {
+            if (!timeStr || !timeStr.includes(":")) return false;
+            const h = parseInt(timeStr.split(":")[0], 10);
+            return h >= 48; // 48:00ちょうど、またはそれ以上ならアウト
+        };
+
+        const targetTimes = [row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime];
+        if (targetTimes.some(isOver48)) {
+            alert("48:00以上の時間は入力できません。大手ソフト（freee等）の仕様に合わせ、上限は47:59までとしています。");
+            return;
+        }
+        // ---------------------------------
+
         if (!row.in || !row.out) {
             alert("出勤・退勤時間を入力してください。");
             return;
@@ -195,13 +343,13 @@ export default function AttendanceManager({
                     staff_id, work_date, entry_time, exit_time, 
                     break_start, break_end, out_time, return_time, 
                     work_hours, night_hours,
-                    actual_hourly_wage, overtime_rate, night_rate
+                    actual_base_wage, overtime_rate, night_rate
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     selectedStaffId, date, row.in||"", row.out||"", 
                     row.bStart||"", row.bEnd||"", row.outTime||"", row.returnTime||"", 
                     Number(total), Number(night),
-                    currentStaff.hourly_wage,       // ★その時の時給
+                    currentStaff.base_wage,       // ★その時の時給
                     PAYROLL_SETTINGS.OVERTIME_RATE, // ★その時の残業率(1.25)
                     0.25                            // ★その時の深夜率
                 ]
@@ -214,10 +362,27 @@ export default function AttendanceManager({
                     isSaved: true, 
                     savedHours: Number(total), 
                     nightHours: Number(night),
-                    actual_hourly_wage: currentStaff.hourly_wage 
+                    actual_base_wage: currentStaff.base_wage 
                 } 
             }));
-        } catch (e) { alert("保存失敗: " + e); }
+        } catch (e) {
+            // 1. 開発者向け：コンソールに詳細を出力（原因特定が早まります）
+            console.error("【保存エラー詳細】", {
+                date,
+                staffId: selectedStaffId,
+                error: e
+            });
+
+            // 2. ユーザー向け：状況に合わせたメッセージ
+            // SQLiteなどの制約違反や接続エラーを想定
+            const errorMessage = e instanceof Error ? e.message : String(e);
+            
+            alert(
+                "❌ 保存できませんでした\n\n" +
+                "理由: " + errorMessage + "\n\n" +
+                "ネット接続を確認するか、ブラウザを再読み込みして再度お試しください。"
+            );
+        }
     };
 
     const saveAllMonthlyData = async () => {
@@ -235,26 +400,40 @@ export default function AttendanceManager({
 
     const revertAttendance = async (date: string) => {
         if (!db || !selectedStaffId) return;
-        const res = await db.select<any[]>("SELECT * FROM attendance WHERE staff_id = ? AND work_date = ?", [selectedStaffId, date]);
-        if (res.length > 0) {
-            const row = res[0];
-            setMonthlyWorkData(prev => ({
-                ...prev,
-                [date]: { 
-                    in: row.entry_time, 
-                    out: row.exit_time, 
-                    bStart: row.break_start, 
-                    bEnd: row.break_end, 
-                    outTime: row.out_time,     // 🆕 追加
-                    returnTime: row.return_time, // 🆕 追加
-                    isSaved: true, 
-                    savedHours: row.work_hours,
-                    nightHours: row.night_hours,     // 🆕 追加
-                    actual_hourly_wage: row.actual_hourly_wage // 🆕 追加
-                }
-            }));
-        } else {
-            setMonthlyWorkData(prev => { const newData = { ...prev }; delete newData[date]; return newData; });
+
+        try {
+            // 1. 型アサーションを後ろに付ける (as any[])
+            const res = await db.select(
+                "SELECT * FROM attendance WHERE staff_id = ? AND work_date = ?",
+                [selectedStaffId, date]
+            ) as any[];
+
+            if (res && res.length > 0) {
+                const row = res[0];
+                setMonthlyWorkData(prev => ({
+                    ...prev,
+                    [date]: { 
+                        in: row.entry_time || "", 
+                        out: row.exit_time || "", 
+                        bStart: row.break_start || "", 
+                        bEnd: row.break_end || "", 
+                        outTime: row.out_time || "",
+                        returnTime: row.return_time || "",
+                        isSaved: true, 
+                        savedHours: Number(row.work_hours) || 0,
+                        nightHours: Number(row.night_hours) || 0,
+                        actual_base_wage: row.actual_base_wage || 0
+                    }
+                }));
+            } else {
+                // 2. delete を使わず、スプレッド構文で特定のキーを除外する（よりクリーンな書き方）
+                setMonthlyWorkData(prev => {
+                    const { [date]: _, ...rest } = prev;
+                    return rest;
+                });
+            }
+        } catch (e) {
+            console.error("元に戻す処理でエラーが発生しました:", e);
         }
     };
 
@@ -262,7 +441,6 @@ export default function AttendanceManager({
     const cardStyle = { backgroundColor: "white", padding: "20px", borderRadius: "12px", boxShadow: "0 4px 6px rgba(0,0,0,0.05)", marginBottom: "20px" };
     const inputStyle = { padding: "10px", border: "1px solid #ddd", borderRadius: "6px", fontSize: "14px", width: "100%", boxSizing: "border-box" as const };
     const labelStyle = { fontSize: "12px", color: "#7f8c8d", marginBottom: "2px", display: "block" };
-    const timeInputStyle = { padding: "4px 8px", border: "1px solid #ddd", borderRadius: "4px", fontSize: "14px", fontFamily: "monospace", backgroundColor: "#fcfcfc" };
     const thStyle = { padding: "12px", fontSize: "14px", color: "#7f8c8d", textAlign: "left" as const };
     const tdStyle = { padding: "12px", fontSize: "14px" };
     const btnStyle = { backgroundColor: "#2ecc71", color: "white", border: "none", padding: "10px 20px", borderRadius: "8px", cursor: "pointer", fontWeight: "bold" as const };
@@ -271,70 +449,41 @@ export default function AttendanceManager({
     // セット内の狭い余白（デフォルトより少し詰めたい場合）
     const tdTightStyle = { ...tdStyle, paddingRight: "4px" };
 
-    // --- ★ 集計ロジック（60時間超・JSX対応版） ★ ---
-    const savedRows = monthlyWorkData ? Object.values(monthlyWorkData).filter(row => row?.isSaved) : [];
-    
-    let totalHours = 0;
-    let totalNightHours = 0;
-    let totalOvertimeHours = 0; // 画面表示用の「全残業時間」
-    let monthlyOTCounter = 0;   // 60h判定用の「累計カウンター」
-    let totalEarnings = 0;      // 給与の合計（交通費以外）
+    // --- ★ 集計ロジック（給与計算エンジン呼び出し版） ★ ---
+    const staffInfo = staffList?.find(s => String(s.id) === String(selectedStaffId));
 
-    // 日付順にソートして累計計算を正確にする
-    const sortedDates = Object.keys(monthlyWorkData)
-        .filter(date => monthlyWorkData[date].isSaved)
-        .sort();
+    // 1. 保存済みの勤怠データをエンジン用フォーマットに変換
+    const attendanceRowsForCalc = Object.entries(monthlyWorkData)
+        .filter(([_, row]) => row.isSaved)
+        .map(([date, row]) => ({
+            work_date: date,
+            work_hours: row.savedHours,
+            night_hours: row.nightHours,
+            actual_base_wage: row.actual_base_wage
+        }));
 
-    sortedDates.forEach(date => {
-        const row = monthlyWorkData[date];
-        const h = Number(row.savedHours) || 0;
-        const n = Number(row.nightHours) || 0;
-        
-        // スタッフ情報の取得
-        const staffInfo = staffList?.find(s => String(s.id) === String(selectedStaffId));
-        const wage = Number(row.actual_hourly_wage) || Number(staffInfo?.hourly_wage) || 0;
+    // 2. 給与計算エンジンを実行
+    // ※ extrasは一旦空（住民税や手当を拡張する時にここを使います）
+    const calcResult = (staffInfo && attendanceRowsForCalc.length > 0 && companySettings)
+        ? calculateSalary(
+            staffInfo, 
+            attendanceRowsForCalc, 
+            { 
+                allowanceName: "", allowanceAmount: 0, residentTax: 0, 
+                prefecture: branchPrefecture, 
+                dependents: 0, customItems: [] 
+            }, 
+            targetYear, targetMonth, companySettings
+        )
+        : null;
 
-        totalHours += h;
-        totalNightHours += n;
-
-        // 1日の残業時間を計算 (8時間超)
-        const dailyOT = Math.max(0, h - PAYROLL_SETTINGS.OVERTIME_THRESHOLD);
-        totalOvertimeHours += dailyOT;
-
-        // --- 給与計算 ---
-        let dailyAmount = wage * h; // 基本給
-        dailyAmount += (wage * 0.25 * n); // 深夜割増分
-
-        // 残業割増分（0.01h単位で累計60hをチェック）
-        if (dailyOT > 0) {
-            for (let i = 0; i < dailyOT; i += 0.01) {
-                if (monthlyOTCounter < 60) {
-                    dailyAmount += (wage * 0.25 * 0.01);
-                } else {
-                    dailyAmount += (wage * 0.50 * 0.01);
-                }
-                monthlyOTCounter += 0.01;
-            }
-        }
-        totalEarnings += dailyAmount;
-    });
-
-    // 交通費の計算
-    const currentStaff = staffList?.find(s => String(s.id) === String(selectedStaffId));
-    const workDays = sortedDates.length;
-    let totalCommute = 0;
-    if (currentStaff) {
-        const cWage = Number(currentStaff.commute_wage) || 0;
-        if (currentStaff.commute_type === "daily") {
-            totalCommute = cWage * workDays;
-        } else if (currentStaff.commute_type === "monthly") {
-            totalCommute = cWage;
-        }
-    }
-
-    // JSXで使用する最終的な変数
-    const totalPay = Math.ceil(totalEarnings) + totalCommute;
-    const over60Hours = Math.max(0, monthlyOTCounter - 60); // もし画面に出すなら
+    // 3. JSXで使用する変数に結果を紐付け
+    const totalHours         = calcResult?.totalWorkHours || 0;
+    const totalNightHours    = calcResult?.totalNightHours || 0;
+    const totalOvertimeHours = calcResult?.totalOvertimeHours || 0;
+    const totalPay           = calcResult?.totalEarnings || 0; // 交通費・割増・端数処理すべて込み
+    const totalCommute       = calcResult?.commutePay || 0;
+    const over60Hours = Math.max(0, totalOvertimeHours - 60);
 
     return (
         <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
@@ -353,23 +502,73 @@ export default function AttendanceManager({
                     </div>
                 </div>
                 <button onClick={() => { const d = new Date(); setTargetYear(d.getFullYear()); setTargetMonth(d.getMonth() + 1); }} style={{ ...modernIconBtnStyle("#7f8c8d"), marginTop: "15px" }}>今月に戻る</button>
+                {/* 🆕 ここに一括操作ボタンを追加 */}
+                <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
+                    <button 
+                        onClick={handleExportCSV} // 紐付け！
+                        style={modernIconBtnStyle("#34495e")}
+                    >
+                        📤 CSV出力
+                    </button>
+                    <button 
+                        onClick={handleImportCSV} // 🆕 紐付け
+                        style={modernIconBtnStyle("#2980b9")}
+                    >
+                        📥 CSV取込
+                    </button>
+                </div>
             </div>
 
-            <section style={{ ...cardStyle, borderTop: "4px solid #3498db", marginTop: "20px" }}>
-                <label style={labelStyle}>対象の従業員を選択</label>
-                <select value={selectedStaffId} onChange={e => setSelectedStaffId(e.target.value)} style={{ ...inputStyle, fontSize: "16px", fontWeight: "bold" }}>
-                    <option value="">-- 従業員を選んでください --</option>
-                    {staffList.map(s => <option key={s.id} value={s.id}>{s.id}: {s.name}</option>)}
-                </select>
+            {/* 🆕 従業員選択と一括保存ボタンを横並びにするセクション */}
+            <section style={{ 
+                display: "flex", 
+                justifyContent: "space-between", // 両端に広げる
+                alignItems: "flex-end",         // 下揃え
+                gap: "20px", 
+                marginBottom: "25px",           // 下の表との間隔を広めに（少し離す）
+                marginTop: "20px"
+            }}>
+                {/* 左側：従業員選択（幅を半分くらいに） */}
+                <div style={{ ...cardStyle, flex: "0 1 50%", margin: 0, borderTop: "4px solid #3498db" }}>
+                    <label style={labelStyle}>対象の従業員を選択</label>
+                    <select 
+                        value={selectedStaffId} 
+                        onChange={e => setSelectedStaffId(e.target.value)} 
+                        style={{ ...inputStyle, fontSize: "16px", fontWeight: "bold" }}
+                    >
+                        <option value="">-- 従業員を選んでください --</option>
+                        {staffList.map(s => <option key={s.id} value={s.id}>{s.id}: {s.name}</option>)}
+                    </select>
+                </div>
+
+                {/* 右側：一括保存ボタン（スタッフが選択されている時だけ表示） */}
+                <div style={{ flex: "0 1 auto", paddingBottom: "5px" }}>
+                    {selectedStaffId && (
+                        <button 
+                            onClick={saveAllMonthlyData} 
+                            style={{ 
+                                ...btnStyle, 
+                                backgroundColor: "#34495e", 
+                                fontSize: "14px", 
+                                display: "flex", 
+                                alignItems: "center", 
+                                gap: "8px",
+                                boxShadow: "0 2px 4px rgba(0,0,0,0.1)" // 少し浮かせて押しやすく
+                            }}
+                        >
+                            📂 今月の未保存分をすべて保存
+                        </button>
+                    )}
+                </div>
             </section>
 
             {selectedStaffId ? (
                 <>
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "15px" }}>
+                {/* <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "15px" }}>
                     <button onClick={saveAllMonthlyData} style={{ ...btnStyle, backgroundColor: "#34495e", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
                     📂 今月の未保存分をすべて保存
                     </button>
-                </div>
+                </div> */}
                 <section style={cardStyle}>
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
@@ -431,22 +630,29 @@ export default function AttendanceManager({
                                 const isBreakIncomplete = (hasAnyInput(row.bStart) || hasAnyInput(row.bEnd)) && !isBreakComplete;
                                 const isOutIncomplete = (hasAnyInput(row.outTime) || hasAnyInput(row.returnTime)) && !isOutComplete;
 
-                                // --- 🆕 時間枠の矛盾チェック ---
+                                // 🆕 48時間制対応の矛盾チェック
                                 let isTimeRangeError = false;
                                 if (isBaseComplete) {
                                     const start = toMin(row.in);
                                     const end = toMin(row.out);
 
+                                    // 1. 退勤が出勤より前、または同時ならエラー
                                     if (end <= start) isTimeRangeError = true;
 
+                                    // 2. 休憩時間のチェック（出勤〜退勤の間に収まっているか）
                                     if (isBreakComplete) {
-                                        if (toMin(row.bStart) < start || toMin(row.bEnd) > end) isTimeRangeError = true;
-                                        if (toMin(row.bEnd) <= toMin(row.bStart)) isTimeRangeError = true;
+                                        const bS = toMin(row.bStart);
+                                        const bE = toMin(row.bEnd);
+                                        // 休憩開始が出勤より前、休憩終了が退勤より後、または休憩の前後逆転をチェック
+                                        if (bS < start || bE > end || bE <= bS) isTimeRangeError = true;
                                     }
 
+                                    // 3. 外出時間のチェック（出勤〜退勤の間に収まっているか）
                                     if (isOutComplete) {
-                                        if (toMin(row.outTime) < start || toMin(row.returnTime) > end) isTimeRangeError = true;
-                                        if (toMin(row.returnTime) <= toMin(row.outTime)) isTimeRangeError = true;
+                                        const oS = toMin(row.outTime);
+                                        const oR = toMin(row.returnTime);
+                                        // 外出開始が出勤より前、戻りが退勤より後、または外出の前後逆転をチェック
+                                        if (oS < start || oR > end || oR <= oS) isTimeRangeError = true;
                                     }
                                 }
 
@@ -459,8 +665,6 @@ export default function AttendanceManager({
                                 const { total: currentHours } = calcDetailedDiff(
                                     row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime
                                 );
-
-                                const hasSavedRecord = rowData.isSaved && rowData.savedHours >= 0;
 
                                 return (
                                     <tr key={dateStr} style={{ 
@@ -547,7 +751,26 @@ export default function AttendanceManager({
                                                             // 🆕 矛盾がある時は赤字で警告！
                                                             <span style={{ color: "#e74c3c", fontWeight: "bold" }}>⚠️ 時間枠不正</span>
                                                         ) : isAllInputValid ? (
-                                                            <span style={{ color: "#3498db", fontWeight: "bold" }}>🚀 {currentHours}h</span>
+                                                            // 🆕 🚀 の色を時間によって変え、24時間を超えたら警告ラベルを出す
+                                                            <span style={{ 
+                                                                color: Number(currentHours) > 16 ? "#e67e22" : "#3498db", 
+                                                                fontWeight: "bold" 
+                                                            }}>
+                                                                🚀 {currentHours}h
+                                                                {Number(currentHours) > 24 && (
+                                                                    <span style={{ 
+                                                                        marginLeft: "4px", 
+                                                                        fontSize: "10px", 
+                                                                        backgroundColor: "#fff7ed", 
+                                                                        color: "#ea580c", 
+                                                                        padding: "1px 4px", 
+                                                                        borderRadius: "4px",
+                                                                        border: "1px solid #ffedd5"
+                                                                    }}>
+                                                                        長時間
+                                                                    </span>
+                                                                )}
+                                                            </span>
                                                         ) : (
                                                             <span style={{ color: "#bdc3c7", fontStyle: "italic" }}>
                                                                 {isBreakIncomplete ? "休憩入力待ち..." : 
@@ -601,12 +824,16 @@ export default function AttendanceManager({
                         color: "white", 
                         borderRadius: "12px",
                         display: "grid",
-                        gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1.5fr", // 支給額を少し広く
+                        gridTemplateColumns: "1fr 1fr 1fr 1fr 1.5fr", 
                         gap: "15px"
                     }}>
                         <div>
                             <div style={{ fontSize: "12px", color: "#bdc3c7" }}>基本情報</div>
-                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>{workDays}日 / {formatHours(totalHours)}</div>
+                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>{attendanceRowsForCalc.length}日 / {formatHours(totalHours)}</div>
+                            {/* 🆕 月給制の場合は本来の額面を小さく表示 */}
+                            {staffInfo?.wage_type === "monthly" && (
+                                <div style={{ fontSize: "11px", color: "#95a5a6" }}>月給: ¥{Number(staffInfo.base_wage).toLocaleString()}</div>
+                            )}
                         </div>
                         
                         <div>
@@ -614,11 +841,8 @@ export default function AttendanceManager({
                             <div style={{ fontSize: "18px", fontWeight: "bold", color: "#e74c3c" }}>
                                 {formatHours(totalOvertimeHours)}
                             </div>
-                            {/* 🆕 60h超がある時だけ、ひっそり、かつ赤く警告 */}
-                            {monthlyOTCounter > 60 && (
-                                <div style={{ fontSize: "11px", color: "#ff7675" }}>
-                                    (うち50%増: {formatHours(monthlyOTCounter - 60)})
-                                </div>
+                            {over60Hours > 0 && (
+                                <div style={{ fontSize: "11px", color: "#ff7675" }}> (うち50%増: {formatHours(over60Hours)}) </div>
                             )}
                         </div>
 
@@ -627,16 +851,30 @@ export default function AttendanceManager({
                             <div style={{ fontSize: "18px", fontWeight: "bold", color: "#f1c40f" }}>{formatHours(totalNightHours)}</div>
                         </div>
 
+                        {/* 🆕 欠勤控除がある場合はここを表示、なければ交通費を表示 */}
                         <div>
-                            <div style={{ fontSize: "12px", color: "#bdc3c7" }}>交通費</div>
-                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>¥{totalCommute.toLocaleString()}</div>
+                            {calcResult && calcResult.absenceDeduction > 0 ? (
+                                <>
+                                    <div style={{ fontSize: "12px", color: "#ff7675" }}>欠勤控除</div>
+                                    <div style={{ fontSize: "18px", fontWeight: "bold", color: "#ff7675" }}>
+                                        -¥{calcResult.absenceDeduction.toLocaleString()}
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div style={{ fontSize: "12px", color: "#bdc3c7" }}>交通費</div>
+                                    <div style={{ fontSize: "18px", fontWeight: "bold" }}>¥{totalCommute.toLocaleString()}</div>
+                                </>
+                            )}
                         </div>
 
                         <div style={{ borderLeft: "1px solid #7f8c8d", paddingLeft: "20px", textAlign: "right" }}>
-                            <div style={{ fontSize: "12px", color: "#2ecc71" }}>💰 総支給額（概算）</div>
+                            <div style={{ fontSize: "12px", color: "#2ecc71" }}>💰 差引総支給額（概算）</div>
                             <div style={{ fontSize: "28px", fontWeight: "bold", color: "#2ecc71" }}>
                                 ¥{totalPay.toLocaleString()}
                             </div>
+                            {/* 🆕 補足: 交通費が含まれていることを明記 */}
+                            <div style={{ fontSize: "10px", color: "#95a5a6" }}>※残業・深夜・交通費・控除を反映済</div>
                         </div>
                     </div>
                 </section>
