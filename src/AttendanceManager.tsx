@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState, Fragment } from "react";
 // 🆕 calculateSalary を追加（ファイルパスは作成した場所に合わせて調整してください）
 import { calcDetailedDiff, modernIconBtnStyle, formatHours, generateAttendanceCSV, parseAttendanceCSV } from "./utils";
 import { calculateSalary } from "./calcSalary";
@@ -118,9 +118,71 @@ export default function AttendanceManager({
     const [monthlyWorkData, setMonthlyWorkData] = useState<Record<string, any>>({});
     const [companySettings, setCompanySettings] = useState<any>(null);
     const [branchPrefecture, setBranchPrefecture] = useState<string>("東京");
+    const [remainingPaidLeave, setRemainingPaidLeave] = useState<number>(0);
+    const [holidays, setHolidays] = useState<Record<string, string>>({});
+    const [companyHolidays, setCompanyHolidays] = useState<Record<string, number>>({});
+
+    // データ読み込み関数 (loadMonthlyData 内、または useEffect 内で実行)
+    const loadCalendarSettings = async () => {
+        // 1. 祝日マスターのロード
+        const resHolidays = await db.select<any[]>("SELECT holiday_date, name FROM holiday_master");
+        const hMap: Record<string, string> = {};
+        resHolidays.forEach((h) => { hMap[h.holiday_date] = h.name; });
+        setHolidays(hMap);
+
+        // 2. 会社カレンダー設定のロード (選択中のスタッフのパターンに合わせる)
+        if (selectedStaffId) {
+            const staff = staffList.find(s => String(s.id) === String(selectedStaffId));
+            const patternId = staff?.calendar_pattern_id || 1;
+            const resCompany = await db.select<any[]>(
+                "SELECT work_date, is_holiday FROM company_calendar WHERE pattern_id = ?",
+                [patternId]
+            );
+            const cMap: Record<string, number> = {};
+            resCompany.forEach((c) => { cMap[c.work_date] = c.is_holiday; });
+            setCompanyHolidays(cMap);
+        }
+    };
+
+    // targetMonth や selectedStaffId が変わった時に再実行
+    useEffect(() => {
+        loadCalendarSettings();
+    }, [db, targetMonth, selectedStaffId]);
+
+    const checkRemainingPaidLeave = async () => {
+        if (!db || !selectedStaffId) return;
+
+        // 1. 有効期限内の付与日数のみ合計（期限切れは残日数に含めない）
+        const today = new Date().toISOString().split("T")[0];
+        const grants = await db.select(
+            "SELECT SUM(days_granted) as total FROM paid_leave_grants WHERE staff_id = ? AND expiry_date >= ?",
+            [selectedStaffId, today]
+        ) as any[];
+        const totalGranted = grants[0]?.total || 0;
+
+        // 2. 使用済み日数を取得（DBの attendance テーブルから集計）
+        const used = await db.select(`
+            SELECT 
+                SUM(CASE WHEN work_type = 'paid_full' THEN 1.0 
+                        WHEN work_type = 'paid_half' THEN 0.5 
+                        ELSE 0 END) as used_days,
+                SUM(paid_leave_hours) as used_hours
+            FROM attendance 
+            WHERE staff_id = ?`,
+            [selectedStaffId]
+        ) as any[];
+
+        const daysFromType = used[0]?.used_days || 0;
+        const daysFromHours = (used[0]?.used_hours || 0) / 8; // 8時間で1日換算の場合
+
+        setRemainingPaidLeave(totalGranted - (daysFromType + daysFromHours));
+    };
+
+    // 従業員を切り替えた時にチェック
+    useEffect(() => { checkRemainingPaidLeave(); }, [selectedStaffId]);
 
     // 1. フィルタ状態の管理（初期値は 'active' のみ）
-        const [activeFilters, setActiveFilters] = useState<string[]>(["active"]);
+    const [activeFilters, setActiveFilters] = useState<string[]>(["active"]);
     
     // 2. フィルタボタンの定義
     const statusOptions = [
@@ -144,14 +206,37 @@ export default function AttendanceManager({
         );
     };
 
-    const handleExportCSV = async () => {
+    // 📄 生データ（打刻ログ）のエクスポート
+    const handleExportRawCSV = async () => {
         if (!db) return;
-        
-        // YYYY-MM- の形式を作成
         const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-`;
-        
         try {
-            // 1. DBからその月の全スタッフデータを取得
+            const data = await db.select(`
+                SELECT 
+                    staff_id, work_date, 
+                    csv_entry_time as entry_time, csv_exit_time as exit_time,
+                    csv_break_start as break_start, csv_break_end as break_end,
+                    csv_out_time as out_time, csv_return_time as return_time
+                FROM attendance 
+                WHERE work_date LIKE ?
+                ORDER BY staff_id, work_date
+            `, [`${monthStr}%`]) as any[];
+
+            if (!data.length) return alert("出力するデータがありません。");
+
+            const csvContent = generateAttendanceCSV(data); // 既存の関数を使用
+            downloadCSV(csvContent, `打刻ログ_${targetYear}年${targetMonth}月.csv`);
+        } catch (e) {
+            console.error(e);
+            alert("エクスポートに失敗しました。");
+        }
+    };
+
+    // 📤 完全データ（修正・集計済み）のエクスポート
+    const handleExportFullCSV = async () => {
+        if (!db) return;
+        const monthStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}-`;
+        try {
             const data = await db.select(`
                 SELECT a.*, s.name as staff_name 
                 FROM attendance a
@@ -160,29 +245,27 @@ export default function AttendanceManager({
                 ORDER BY a.staff_id, a.work_date
             `, [`${monthStr}%`]) as any[];
 
-            if (!data || data.length === 0) {
-                alert("出力するデータがありません。");
-                return;
-            }
+            if (!data.length) return alert("出力するデータがありません。");
 
-            // 2. utilsの関数でCSV文字列に変換
-            const csvContent = generateAttendanceCSV(data);
-            
-            // 3. ブラウザにダウンロードさせる
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            link.download = `勤怠データ_${targetYear}年${targetMonth}月.csv`;
-            link.click();
-            
-            // メモリ解放
-            URL.revokeObjectURL(url);
-            
+            // 全項目を含めたCSV文字列を生成（※utils側の更新が必要です）
+            const csvContent = generateAttendanceCSV(data); 
+            downloadCSV(csvContent, `勤怠詳細_${targetYear}年${targetMonth}月.csv`);
         } catch (e) {
-            console.error("CSV出力エラー:", e);
-            alert("エクスポート中にエラーが発生しました。");
+            console.error(e);
+            alert("エクスポートに失敗しました。");
         }
+    };
+
+    // 共通のダウンロード処理（BOM付き）
+    const downloadCSV = (content: string, filename: string) => {
+        const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+        const blob = new Blob([bom, content], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
     };
 
     const handleImportCSV = () => {
@@ -200,51 +283,55 @@ export default function AttendanceManager({
                     const text = event.target?.result as string;
                     const rows = parseAttendanceCSV(text);
                     
-                    console.log(`${rows.length}件のインポートを開始します...`);
+                    if (rows.length === 0) return;
+
+                    // 🆕 最初の行を見て、Full形式（詳細データ）かRaw形式（打刻ログ）か判定
+                    const isFullFormat = "区分" in rows[0] || "名前" in rows[0];
 
                     for (const row of rows) {
-                        console.log("Row Object:", row);
-
                         const sId = row["スタッフID"];
                         const date = row["日付"];
-                        
-                        if (!sId || !date) {
-                            console.warn("スキップ：スタッフIDまたは日付がありません", row);
-                            continue;
-                        }
+                        if (!sId || !date) continue;
 
-                        // 🆕 ここを追加！ スタッフ情報を特定する
                         const staff = staffList.find(s => String(s.id) === String(sId));
-                        if (!staff) {
-                            console.warn(`スキップ：ID ${sId} のスタッフがマスタに存在しません`);
-                            continue;
-                        }
+                        if (!staff) continue;
 
+                        // 共通の計算（出勤・退勤等から実働と深夜を算出）
+                        // ※Full形式であっても、念のため再計算して整合性を取ります
                         const { total, night } = calcDetailedDiff(
-                            row["出勤"], row["退勤"], row["休憩開始"], row["休憩終了"], row["外出"], row["戻り"]
+                            row["出勤"], row["退勤"], row["休憩始"], row["休憩終"], row["外出"], row["戻り"]
                         );
 
                         await db.execute("DELETE FROM attendance WHERE staff_id = ? AND work_date = ?", [sId, date]);
+                        
                         await db.execute(
                             `INSERT INTO attendance (
-                                staff_id, work_date, entry_time, exit_time, 
-                                break_start, break_end, out_time, return_time, 
+                                staff_id, work_date, 
+                                entry_time, exit_time, break_start, break_end, out_time, return_time,
+                                csv_entry_time, csv_exit_time, csv_break_start, csv_break_end, csv_out_time, csv_return_time,
                                 work_hours, night_hours,
-                                actual_base_wage, overtime_rate, night_rate
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                actual_base_wage, overtime_rate, night_rate,
+                                work_type, paid_leave_hours, memo
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                             [
-                                sId, date, row["出勤"] || "", row["退勤"] || "", 
-                                row["休憩開始"] || "", row["休憩終了"] || "", 
-                                row["外出"] || "", row["戻り"] || "", 
+                                sId, date, 
+                                row["出勤"] || "", row["退勤"] || "", row["休憩始"] || "", row["休憩終"] || "", row["外出"] || "", row["戻り"] || "",
+                                // 🆕 Rawデータとして保存（インポート時点の値を「生データ」として記録）
+                                row["出勤"] || "", row["退勤"] || "", row["休憩始"] || "", row["休憩終"] || "", row["外出"] || "", row["戻り"] || "",
                                 Number(total), Number(night), 
-                                staff.base_wage, 1.25, 0.25 // staff が見つかっていればOK
+                                staff.wage_type === "monthly" ? 0 : staff.base_wage, 1.25, 0.25,
+                                // 🆕 Full形式ならCSVの値、Raw形式ならデフォルト値を採用
+                                isFullFormat ? (row["区分"] || "normal") : "normal",
+                                isFullFormat ? (Number(row["有給h"]) || 0) : 0,
+                                isFullFormat ? (row["備考"] || "") : ""
                             ]
                         );
                     }
-                    console.log("インポートが完了しました。画面を更新します。");
+                    alert(`${isFullFormat ? "詳細データ" : "打刻ログ"}として ${rows.length} 件インポートしました。`);
                     loadMonthlyData(); 
                 } catch (err) {
-                    console.error("エラー:", err);
+                    console.error("インポートエラー:", err);
+                    alert("CSVの解析に失敗しました。形式を確認してください。");
                 }
             };
             reader.readAsText(file);
@@ -300,7 +387,18 @@ export default function AttendanceManager({
                         nightHours: Number(row.night_hours) || 0,
                         actual_base_wage: row.actual_base_wage || 0,
                         overtime_rate: row.overtime_rate || 1.25,
-                        night_rate: row.night_rate || 0.25
+                        night_rate: row.night_rate || 0.25,
+                        
+                        // --- 🆕 ここを追加 ---
+                        // DBのカラム名 (row.xxx) と UIで使う名前 (xxx: ) を紐付け
+                        workType: row.work_type || "normal", 
+                        paidHours: row.paid_leave_hours || 0, 
+                        memo: row.memo || "",
+                        
+                        // CSV表示用（Rawデータの表示に必要）
+                        csv_entry_time: row.csv_entry_time || "--:--",
+                        csv_exit_time: row.csv_exit_time || "--:--"
+                        // --------------------
                     };
                 });
             }
@@ -336,30 +434,41 @@ export default function AttendanceManager({
         const currentStaff = staffList?.find(s => String(s.id) === String(selectedStaffId));
         if (!row || !currentStaff) return;
 
-        // --- 🆕 48時間上限バリデーション ---
+        // --- 1. 時間バリデーション (通常勤務の時だけ厳しくチェック) ---
         const isOver48 = (timeStr: string) => {
             if (!timeStr || !timeStr.includes(":")) return false;
             const h = parseInt(timeStr.split(":")[0], 10);
-            return h >= 48; // 48:00ちょうど、またはそれ以上ならアウト
+            return h >= 48;
         };
 
         const targetTimes = [row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime];
         if (targetTimes.some(isOver48)) {
-            alert("48:00以上の時間は入力できません。他社ソフトの仕様に合わせ、上限は47:59までとしています。");
+            alert("48:00以上の時間は入力できません。");
             return;
         }
-        // ---------------------------------
 
-        if (!row.in || !row.out) {
+        // 🆕 修正ポイント：通常勤務("normal") か 半休("paid_half") の時だけ出退勤チェックをする
+        const needsTimeInput = row.workType === "normal" || row.workType === "paid_half";
+        if (needsTimeInput && (!row.in || !row.out)) {
             alert("出勤・退勤時間を入力してください。");
             return;
         }
 
-        // 計算結果を取得
-        const { total, night } = calcDetailedDiff(row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime);
+        // --- 2. 計算 (全休のときは計算をスキップして 0 にする) ---
+        // 🆕 修正ポイント：全休("paid_full") または 欠勤("absent") なら 0、それ以外は計算
+        let calcTotal: number = 0;
+        let calcNight: number = 0;
+
+        if (row.workType !== "paid_full" && row.workType !== "absent") {
+            // 2. 計算結果を受け取る
+            const { total, night } = calcDetailedDiff(row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime);
+            
+            // 3. 🆕 Number() で数値に変換して代入する
+            calcTotal = Number(total);
+            calcNight = Number(night);
+        }
 
         try {
-            // 一旦消して
             await db.execute("DELETE FROM attendance WHERE staff_id = ? AND work_date = ?", [selectedStaffId, date]);
             
             const isMonthly = currentStaff.wage_type === "monthly";
@@ -369,16 +478,19 @@ export default function AttendanceManager({
                     staff_id, work_date, entry_time, exit_time, 
                     break_start, break_end, out_time, return_time, 
                     work_hours, night_hours,
-                    actual_base_wage, overtime_rate, night_rate
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    actual_base_wage, overtime_rate, night_rate,
+                    work_type, paid_leave_hours, memo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     selectedStaffId, date, row.in||"", row.out||"", 
                     row.bStart||"", row.bEnd||"", row.outTime||"", row.returnTime||"", 
-                    Number(total), Number(night),
-                    // ✅ 月給制なら 0 (または NULL)、時給制なら base_wage を入れる
+                    Number(calcTotal), Number(calcNight), // 🆕 計算済みの値を使う
                     isMonthly ? 0 : currentStaff.base_wage, 
                     PAYROLL_SETTINGS.OVERTIME_RATE,
-                    0.25
+                    0.25,
+                    row.workType || "normal",
+                    Number(row.paidHours) || 0,
+                    row.memo || ""
                 ]
             );
 
@@ -387,29 +499,20 @@ export default function AttendanceManager({
                 [date]: { 
                     ...prev[date], 
                     isSaved: true, 
-                    savedHours: Number(total), 
-                    nightHours: Number(night),
-                    actual_base_wage: isMonthly ? 0 : currentStaff.base_wage
+                    savedHours: Number(calcTotal), // 🆕
+                    nightHours: Number(calcNight), // 🆕
+                    actual_base_wage: isMonthly ? 0 : currentStaff.base_wage,
+                    workType: row.workType || "normal",
+                    paidHours: Number(row.paidHours) || 0,
+                    memo: row.memo || ""
                 } 
             }));
         } catch (e) {
-            // 1. 開発者向け：コンソールに詳細を出力（原因特定が早まります）
-            console.error("【保存エラー詳細】", {
-                date,
-                staffId: selectedStaffId,
-                error: e
-            });
-
-            // 2. ユーザー向け：状況に合わせたメッセージ
-            // SQLiteなどの制約違反や接続エラーを想定
-            const errorMessage = e instanceof Error ? e.message : String(e);
-            
-            alert(
-                "❌ 保存できませんでした\n\n" +
-                "理由: " + errorMessage + "\n\n" +
-                "ネット接続を確認するか、ブラウザを再読み込みして再度お試しください。"
-            );
+            console.error("【保存エラー詳細】", e);
+            alert("❌ 保存できませんでした");
         }
+
+        await checkRemainingPaidLeave();
     };
 
     const saveAllMonthlyData = async () => {
@@ -462,6 +565,8 @@ export default function AttendanceManager({
         } catch (e) {
             console.error("元に戻す処理でエラーが発生しました:", e);
         }
+
+        await checkRemainingPaidLeave(); // 🆕 最後にこれを入れる
     };
 
     // --- スタイル定義 ---
@@ -529,18 +634,16 @@ export default function AttendanceManager({
                     </div>
                 </div>
                 <button onClick={() => { const d = new Date(); setTargetYear(d.getFullYear()); setTargetMonth(d.getMonth() + 1); }} style={{ ...modernIconBtnStyle("#7f8c8d"), marginTop: "15px" }}>今月に戻る</button>
-                {/* 🆕 ここに一括操作ボタンを追加 */}
                 <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
-                    <button 
-                        onClick={handleExportCSV} // 紐付け！
-                        style={modernIconBtnStyle("#34495e")}
-                    >
-                        📤 CSV出力
-                    </button>
-                    <button 
-                        onClick={handleImportCSV} // 🆕 紐付け
-                        style={modernIconBtnStyle("#2980b9")}
-                    >
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                        <button onClick={handleExportRawCSV} style={modernIconBtnStyle("#7f8c8d")}>
+                            📄 Raw（打刻ログ）
+                        </button>
+                        <button onClick={handleExportFullCSV} style={modernIconBtnStyle("#34495e")}>
+                            📤 Full（詳細データ）
+                        </button>
+                    </div>
+                    <button onClick={handleImportCSV} style={{ ...modernIconBtnStyle("#2980b9"), padding: "0 15px" }}>
                         📥 CSV取込
                     </button>
                 </div>
@@ -615,6 +718,16 @@ export default function AttendanceManager({
                             ))}
                         </select>
                     </div>
+                    <div style={{ marginTop: "8px", padding: "4px 10px", backgroundColor: "#f8f9fa", borderRadius: "4px", display: "inline-block" }}>
+                        <span style={{ fontSize: "12px", color: "#7f8c8d" }}>現在の有給残：</span>
+                        <span style={{ 
+                            fontWeight: "bold", 
+                            color: remainingPaidLeave <= 0 ? "#e74c3c" : "#2ecc71",
+                            fontSize: "14px"
+                        }}>
+                            {remainingPaidLeave.toFixed(2)} 日
+                        </span>
+                    </div>
                 </div>
 
                 {/* 右側：一括保存ボタン（配置バランスのため位置調整） */}
@@ -676,9 +789,36 @@ export default function AttendanceManager({
                                     bEnd: rowData.bEnd || "",
                                     outTime: rowData.outTime || "",
                                     returnTime: rowData.returnTime || "",
+                                    workType: rowData.workType || "normal",
+                                    paidHours: rowData.paidHours || 0,
+                                    memo: rowData.memo || "",
                                     isSaved: rowData.isSaved || false,
-                                    savedHours: Number(rowData.savedHours) || 0
+                                    savedHours: Number(rowData.savedHours) || 0,
+                                    nightHours: Number(rowData.night_hours) || 0, // 👈 追加
+                                    csvIn: rowData.csv_entry_time || "--:--",
+                                    csvOut: rowData.csv_exit_time || "--:--",
                                 };
+
+                                const hName = holidays[dateStr];              // 祝日名（あれば）
+                                const cSetting = companyHolidays[dateStr];    // 1:休日, 0:出勤, undefined:設定なし
+                                
+                                const isSun = dayOfWeek === "日";
+                                const isSat = dayOfWeek === "土";
+
+                                // 「赤色」にする条件：社休日設定がある OR (設定がなく、かつ日曜か祝日)
+                                const isRedDay = (cSetting === 1) || (cSetting === undefined && (isSun || !!hName));
+                                // 「青色」にする条件：土曜かつ、赤色（祝日）ではない
+                                const isBlueDay = isSat && !isRedDay; 
+
+                                // 背景色の決定ロジック
+                                const rowBgColor = 
+                                    row.workType === "paid_full" ? "#e8f5e9" : 
+                                    row.workType === "absent" ? "#fff3e0" : 
+                                    isRedDay ? "#fff5f5" : 
+                                    isBlueDay ? "#f5faff" : "#fcfcfc";
+
+                                // 文字色の決定ロジック
+                                const dateTextColor = isRedDay ? "#e74c3c" : isBlueDay ? "#3498db" : "#2c3e50";
 
                                 const isFullyTyped = (t: string) => {
                                     if (!t || t === ":") return false;
@@ -745,151 +885,145 @@ export default function AttendanceManager({
                                 );
 
                                 return (
-                                    <tr key={dateStr} style={{ 
-                                        borderBottom: "1px solid #f2f2f2", 
-                                        backgroundColor: dayOfWeek === "日" ? "#fff5f5" : dayOfWeek === "土" ? "#f5faff" : "transparent" 
-                                    }}>
-                                        <td style={{ ...tdStyle, fontWeight: "bold" }}>{day}日 ({dayOfWeek})</td>
-                                        <td style={tdTightStyle}><TimeInputPair value={row.in} onChange={val => handleCellChange(dateStr, 'in', val)} /></td>
-                                        <td style={tdSpacerStyle}><TimeInputPair value={row.out} onChange={val => handleCellChange(dateStr, 'out', val)} /></td>
-                                        <td style={tdTightStyle}><TimeInputPair value={row.bStart} onChange={val => handleCellChange(dateStr, 'bStart', val)} /></td>
-                                        <td style={tdSpacerStyle}><TimeInputPair value={row.bEnd} onChange={val => handleCellChange(dateStr, 'bEnd', val)} /></td>
-                                        <td style={tdTightStyle}><TimeInputPair value={row.outTime} onChange={val => handleCellChange(dateStr, 'outTime', val)} /></td>
-                                        <td style={tdSpacerStyle}><TimeInputPair value={row.returnTime} onChange={val => handleCellChange(dateStr, 'returnTime', val)} /></td>
+                                    <Fragment key={dateStr}>
+                                        {/* --- 1段目：CSV打刻データ --- */}
+                                        <tr style={{ 
+                                            // 🆕 計算済みの rowBgColor を使う
+                                            backgroundColor: rowBgColor, 
+                                            borderTop: "3px solid #eee" 
+                                        }}>
+                                            {/* ① 日付 (3行ぶち抜き) */}
+                                            <td rowSpan={3} style={{ ...tdStyle, fontWeight: "bold", borderRight: "1px solid #eee", verticalAlign: "top", width: "100px" }}>
+                                                <div style={{ 
+                                                    fontSize: "14px", 
+                                                    // 🆕 計算済みの dateTextColor を使う
+                                                    color: dateTextColor 
+                                                }}>
+                                                    {day}日 ({dayOfWeek})
+                                                    {/* 🆕 せっかくなので祝日名も日付の下に出しましょう */}
+                                                    {hName && <div style={{ fontSize: "9px", fontWeight: "normal", marginTop: "2px" }}>{hName}</div>}
+                                                </div>
+                                                <select
+                                                    value={row.workType}
+                                                    onChange={e => {
+                                                        const nextType = e.target.value;
+                                                        if ((nextType === "paid_full" || nextType === "paid_half") && remainingPaidLeave <= 0) {
+                                                            alert("有給残日数がありません。");
+                                                            return;
+                                                        }
+                                                        handleCellChange(dateStr, 'workType', nextType);
+                                                    }}
+                                                    style={{ ...inputStyle, marginTop: "4px", fontSize: "12px", padding: "2px" }}
+                                                >
+                                                    <option value="normal">通常</option>
+                                                    <option value="paid_full">全休(有給)</option>
+                                                    <option value="paid_half">半休(有給)</option>
+                                                    <option value="absent">欠勤</option>
+                                                </select>
+                                            </td>
 
-                                        <td style={{ ...tdStyle, width: "140px" }}>
-                                            <div style={{ display: "flex", alignItems: "center", gap: "8px", height: "45px" }}>
-                                                {rowData.isSaved && !hasChange ? (
-                                                    /* 親要素に relative を指定し、高さを固定（例: 45px） */
-                                                    <div style={{ 
-                                                        position: "relative", 
-                                                        height: "45px", 
-                                                        display: "flex", 
-                                                        alignItems: "center" 
-                                                    }}>
-                                                        
-                                                        {/* メインの行（チェックと実働時間） */}
-                                                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                                                            <span style={{ fontSize: "14px", display: "flex", alignItems: "center" }}>✅</span>
-                                                            
-                                                            <div style={{ 
-                                                                color: row.savedHours > PAYROLL_SETTINGS.OVERTIME_THRESHOLD ? "#e74c3c" : "#2ecc71", 
-                                                                fontWeight: "bold",
-                                                                display: "flex",
-                                                                alignItems: "baseline",
-                                                                lineHeight: "1"
-                                                            }}>
-                                                                <span style={{ fontSize: "16px" }}>{Math.floor(row.savedHours)}</span>
-                                                                <span style={{ fontSize: "10px", marginLeft: "2px", marginRight: "4px" }}>時間</span>
-                                                                <span style={{ fontSize: "16px" }}>{Math.round((row.savedHours % 1) * 60)}</span>
-                                                                <span style={{ fontSize: "10px", marginLeft: "2px" }}>分</span>
-                                                            </div>
-                                                        </div>
+                                            {/* CSVデータエリア (6セル分) */}
+                                            <td style={{ ...tdTightStyle, color: "#94a3b8" }}>
+                                                <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(入)</span>
+                                                {row.csvIn || rowData.csv_entry_time || "--:--"}
+                                            </td>
+                                            <td style={{ ...tdSpacerStyle, color: "#94a3b8" }}>
+                                                <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(出)</span>
+                                                {row.csvOut || rowData.csv_exit_time || "--:--"}
+                                            </td>
+                                            <td colSpan={2} style={{ ...tdTightStyle, fontSize: "11px", color: "#bdc3c7" }}>
+                                                休憩(CSV): {rowData.csv_break_start || "--:--"} ~ {rowData.csv_break_end || "--:--"}
+                                            </td>
+                                            <td colSpan={2} style={{ ...tdTightStyle, fontSize: "11px", color: "#bdc3c7" }}>
+                                                外出(CSV): {rowData.csv_out_time || "--:--"} ~ {rowData.csv_return_time || "--:--"}
+                                            </td>
 
-                                                        {/* 🆕 残業チップ：単位を小さくして表示 */}
-                                                        {row.savedHours > PAYROLL_SETTINGS.OVERTIME_THRESHOLD && (
-                                                            <div style={{ 
-                                                                position: "absolute",
-                                                                top: "31px",
-                                                                left: "20px",
-                                                                fontSize: "9px", // チップ全体の基準サイズ
-                                                                color: "#e74c3c", 
-                                                                backgroundColor: "#fff5f5", 
-                                                                padding: "0px 4px", 
-                                                                borderRadius: "3px", 
-                                                                border: "1px solid #ffcccc",
-                                                                whiteSpace: "nowrap",
-                                                                display: "flex",        // 🆕 横並び
-                                                                alignItems: "baseline"  // 🆕 下端揃え
-                                                            }}>
-                                                                <span style={{ marginRight: "3px" }}>残業</span>
-                                                                
-                                                                {/* 時間の数字 */}
-                                                                <span style={{ fontSize: "10px", fontWeight: "bold" }}>
-                                                                    {Math.floor(row.savedHours - PAYROLL_SETTINGS.OVERTIME_THRESHOLD)}
-                                                                </span>
-                                                                {/* 時間の単位（さらに小さく） */}
-                                                                <span style={{ fontSize: "8px", marginLeft: "1px", marginRight: "2px" }}>時間</span>
-                                                                
-                                                                {/* 分の数字 */}
-                                                                <span style={{ fontSize: "10px", fontWeight: "bold" }}>
-                                                                    {Math.round(((row.savedHours - PAYROLL_SETTINGS.OVERTIME_THRESHOLD) % 1) * 60)}
-                                                                </span>
-                                                                {/* 分の単位（さらに小さく） */}
-                                                                <span style={{ fontSize: "8px", marginLeft: "1px" }}>分</span>
-                                                            </div>
-                                                        )}
+                                            {/* ② 実働時間 (3行ぶち抜き) */}
+                                            <td rowSpan={3} style={{ ...tdStyle, width: "120px", borderLeft: "1px solid #eee", textAlign: "center" }}>
+                                                <div style={{ fontWeight: "bold", color: row.isSaved ? (row.savedHours > 8 ? "#e74c3c" : "#2ecc71") : "#3498db" }}>
+                                                    {row.isSaved ? `${Math.floor(row.savedHours)}h ${Math.round((row.savedHours % 1) * 60)}m` : (isAllInputValid ? `🚀 ${currentHours}h` : "-")}
+                                                </div>
+                                                {row.isSaved && row.nightHours > 0 && (
+                                                    <div style={{ fontSize: "10px", color: "#9b59b6" }}>深夜: {row.nightHours}h</div>
+                                                )}
+                                            </td>
+
+                                            {/* ③ 操作ボタン (3行ぶち抜き) */}
+                                            <td rowSpan={3} style={{ ...tdStyle, textAlign: "center", width: "100px", borderLeft: "1px solid #eee" }}>
+                                                <div style={{ display: "flex", flexDirection: "column", gap: "6px", alignItems: "center" }}>
+                                                    
+                                                    {/* 【保存 / 更新】ボタン */}
+                                                    {((isAllInputValid) || row.workType !== "normal") && hasChange && (
+                                                        <button 
+                                                            style={!row.isSaved ? modernIconBtnStyle("#3498db") : modernIconBtnStyle("#27ae60")} 
+                                                            onClick={() => saveAttendance(dateStr)}
+                                                        >
+                                                            {/* 🆕 row.isSaved を見ることで、保存直後に「更新」に変わります */}
+                                                            {!row.isSaved ? "保存" : "更新"}
+                                                        </button>
+                                                    )}
+
+                                                    {/* 【戻る】ボタン */}
+                                                    {/* 🆕 変更があり、かつ元々保存されていたデータがある場合のみ表示 */}
+                                                    {hasChange && row.isSaved && (
+                                                        <button 
+                                                            style={modernIconBtnStyle("#e67e22")} 
+                                                            onClick={() => revertAttendance(dateStr)}
+                                                        >
+                                                            戻る
+                                                        </button>
+                                                    )}
+
+                                                    {/* 🆕 変更がない時は「✅ 保存済」と出すと、ユーザーが安心します */}
+                                                    {row.isSaved && !hasChange && (
+                                                        <span style={{ color: "#2ecc71", fontSize: "11px", fontWeight: "bold" }}>
+                                                            ✅ 保存済
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+
+                                        {/* --- 2段目：修正入力 --- */}
+                                        <tr style={{ 
+                                            backgroundColor: (row.workType === "paid_full" || row.workType === "absent") ? "#f9f9f9" : "#fff",
+                                            opacity: (row.workType === "paid_full" || row.workType === "absent") ? 0.5 : 1,
+                                            pointerEvents: (row.workType === "paid_full" || row.workType === "absent") ? "none" : "auto"
+                                        }}>
+                                            {/* 日付・実働・操作のセルは rowSpan で埋まっているので、ここはいきなり入力欄から開始 */}
+                                            <td style={tdTightStyle}><TimeInputPair value={row.in} onChange={val => handleCellChange(dateStr, 'in', val)} /></td>
+                                            <td style={tdSpacerStyle}><TimeInputPair value={row.out} onChange={val => handleCellChange(dateStr, 'out', val)} /></td>
+                                            <td style={tdTightStyle}><TimeInputPair value={row.bStart} onChange={val => handleCellChange(dateStr, 'bStart', val)} /></td>
+                                            <td style={tdSpacerStyle}><TimeInputPair value={row.bEnd} onChange={val => handleCellChange(dateStr, 'bEnd', val)} /></td>
+                                            <td style={tdTightStyle}><TimeInputPair value={row.outTime} onChange={val => handleCellChange(dateStr, 'outTime', val)} /></td>
+                                            <td style={tdSpacerStyle}>
+                                                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                                                    <TimeInputPair value={row.returnTime} onChange={val => handleCellChange(dateStr, 'returnTime', val)} />
+                                                    <div style={{ textAlign: "center", borderLeft: "1px solid #eee", paddingLeft: "8px", pointerEvents: "auto" }}>
+                                                        <span style={{ fontSize: "9px", display: "block", color: "#7f8c8d" }}>有給h</span>
+                                                        <input type="number" step="0.5" value={row.paidHours} onChange={e => handleCellChange(dateStr, 'paidHours', e.target.value)} style={{ width: "35px", fontSize: "11px", border: "1px solid #ddd" }} />
                                                     </div>
-                                                ) : (
-                                                    // --- 未保存（入力中）状態 ---
-                                                    <div style={{ fontSize: "13px" }}>
-                                                        {isEmpty ? (
-                                                            <span style={{ color: "#bdc3c7" }}>-</span>
-                                                        ) : isTimeRangeError ? (
-                                                            // 🆕 矛盾がある時は赤字で警告！
-                                                            <span style={{ color: "#e74c3c", fontWeight: "bold" }}>⚠️ 時間枠不正</span>
-                                                        ) : isAllInputValid ? (
-                                                            // 🆕 🚀 の色を時間によって変え、24時間を超えたら警告ラベルを出す
-                                                            <span style={{ 
-                                                                color: Number(currentHours) > 16 ? "#e67e22" : "#3498db", 
-                                                                fontWeight: "bold" 
-                                                            }}>
-                                                                🚀 {currentHours}h
-                                                                {Number(currentHours) > 24 && (
-                                                                    <span style={{ 
-                                                                        marginLeft: "4px", 
-                                                                        fontSize: "10px", 
-                                                                        backgroundColor: "#fff7ed", 
-                                                                        color: "#ea580c", 
-                                                                        padding: "1px 4px", 
-                                                                        borderRadius: "4px",
-                                                                        border: "1px solid #ffedd5"
-                                                                    }}>
-                                                                        長時間
-                                                                    </span>
-                                                                )}
-                                                            </span>
-                                                        ) : (
-                                                            <span style={{ color: "#bdc3c7", fontStyle: "italic" }}>
-                                                                {isBreakIncomplete ? "休憩入力待ち..." : 
-                                                                isOutIncomplete ? "外出入力待ち..." : 
-                                                                !isBaseComplete ? "入力中..." : "保存できます"}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </td>
+                                                </div>
+                                            </td>
+                                        </tr>
 
-                                        <td style={{ ...tdStyle, textAlign: "center", width: "120px" }}>
-                                            <div style={{ display: "flex", gap: "4px", justifyContent: "center", minHeight: "30px", alignItems: "center" }}>
-                                                
-                                                {/* 【更新・保存ボタン】: 整合性が完璧な時だけ出す */}
-                                                {isAllInputValid && hasChange && (
-                                                    <button 
-                                                        style={row.savedHours === 0 ? modernIconBtnStyle("#3498db") : modernIconBtnStyle("#27ae60")} 
-                                                        onClick={() => saveAttendance(dateStr)}
-                                                    >
-                                                        {row.savedHours === 0 ? "保存" : "更新"}
-                                                    </button>
-                                                )}
-
-                                                {/* 【戻るボタン】: 
-                                                    重要：isAllInputValid に依存させない！
-                                                    「一度保存された実績(savedHours > 0)があり」かつ「変更(hasChange)がある」なら、
-                                                    入力が途中（分がまだ、等）でも常に表示する。 */}
-                                                {hasChange && row.savedHours > 0 && (
-                                                    <button 
-                                                        style={modernIconBtnStyle("#e67e22")} 
-                                                        onClick={() => revertAttendance(dateStr)}
-                                                    >
-                                                        戻る
-                                                    </button>
-                                                )}
-                                                
-                                            </div>
-                                        </td>
-                                    </tr>
+                                        {/* --- 3段目：備考欄 --- */}
+                                        <tr style={{ backgroundColor: "#fdfdfd", borderBottom: "1px solid #eee" }}>
+                                            {/* 6セル分をぶち抜いて備考欄にする */}
+                                            <td colSpan={7} style={{ padding: "6px 12px", pointerEvents: "auto" }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                                    <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "bold" }}>備考:</span>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="理由、遅刻・早退の内容など" 
+                                                        value={row.memo || ""}
+                                                        onChange={e => handleCellChange(dateStr, 'memo', e.target.value)}
+                                                        style={{ width: "100%", fontSize: "12px", border: "none", borderBottom: "1px dashed #cbd5e1", background: "transparent", outline: "none" }}
+                                                    />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </Fragment>
                                 );
                             })}
                         </tbody>

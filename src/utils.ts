@@ -132,23 +132,39 @@ export const applyRounding = (value: number, type: string) => {
 
 // utils.ts に追加
 export const generateAttendanceCSV = (data: any[]) => {
-    const header = ["スタッフID", "名前", "日付", "出勤", "退勤", "休憩開始", "休憩終了", "外出", "戻り", "実働", "深夜"];
-    const rows = data.map(row => [
-        row.staff_id,
-        row.staff_name,
-        row.work_date,
-        row.entry_time,
-        row.exit_time,
-        row.break_start,
-        row.break_end,
-        row.out_time,
-        row.return_time,
-        row.work_hours,
-        row.night_hours
-    ]);
+    // データの中に staff_name や work_type があるかどうかでヘッダーを切り替える
+    const isFull = data[0] && "work_type" in data[0];
 
-    // BOM付きでExcel文字化けを防止
-    return "\uFEFF" + [header, ...rows].map(e => e.map(v => `"${v}"`).join(",")).join("\n");
+    const header = isFull 
+        ? ["スタッフID", "名前", "日付", "出勤", "退勤", "休憩始", "休憩終", "外出", "戻り", "区分", "有給h", "実働時間", "深夜時間", "備考"]
+        : ["スタッフID", "日付", "出勤", "退勤", "休憩始", "休憩終", "外出", "戻り"];
+
+    const rows = data.map(row => {
+        const base = [
+            row.staff_id,
+            ...(isFull ? [row.staff_name] : []), // Fullの時だけ名前を入れる
+            row.work_date,
+            row.entry_time || "",
+            row.exit_time || "",
+            row.break_start || "",
+            row.break_end || "",
+            row.out_time || "",
+            row.return_time || ""
+        ];
+
+        if (isFull) {
+            base.push(
+                row.work_type || "normal",
+                row.paid_leave_hours || 0,
+                row.work_hours || 0,
+                row.night_hours || 0,
+                row.memo || ""
+            );
+        }
+        return base.join(",");
+    });
+
+    return [header.join(","), ...rows].join("\n");
 };
 
 export const parseAttendanceCSV = (csvText: string) => {

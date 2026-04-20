@@ -38,58 +38,88 @@ interface CalendarPattern {
 }
 
 export default function StaffManager({ db, onDataChange, staffList }: Props) {
+    // =========================================================
+    // 1. システム・画面制御状態
+    // =========================================================
     const [showForm, setShowForm] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
-    const [isSearchingZip, setIsSearchingZip] = useState(false); // 🆕 検索中フラグ
+    const [isSearchingZip, setIsSearchingZip] = useState(false); // 郵便番号検索中
 
-    // --- フォーム用ステート ---
+    // --- 表示・ソート・絞り込み ---
+    const [sortKey, setSortKey] = useState<"id" | "branch_id">("id");
+    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+    const [searchKeyword, setSearchKeyword] = useState("");
+    const [filterStatus, setFilterStatus] = useState<string[]>(["active", "on_leave"]);
+    const [filterBranchId, setFilterBranchId] = useState<string>("all");
+
+    // =========================================================
+    // 2. 従業員 基本情報 (targetXxx)
+    // =========================================================
     const [targetId, setTargetId] = useState("");
     const [targetName, setTargetName] = useState("");
     const [targetFurigana, setTargetFurigana] = useState("");
     const [targetBirthday, setTargetBirthday] = useState("");
-    const [targetWage, setTargetWage] = useState(1200);
-    const [targetJoinDate, setTargetJoinDate] = useState(new Date().toISOString().split('T')[0]);
-    const [targetStatus, setTargetStatus] = useState("active"); // 🆕
-    const [targetRetirementDate, setTargetRetirementDate] = useState(""); // 🆕
+    
+    // --- 連絡先・住所 ---
     const [targetZip, setTargetZip] = useState("");
     const [targetAddress, setTargetAddress] = useState("");
     const [targetPhone, setTargetPhone] = useState("");
     const [targetMobile, setTargetMobile] = useState("");
-    const [targetCommuteType, setTargetCommuteType] = useState("daily");
-    const [targetCommuteAmount, setTargetCommuteAmount] = useState(0);
-    const [targetWageType, setTargetWageType] = useState("hourly");
-    const [targetDependents, setTargetDependents] = useState(0);
-    const [targetResidentTax, setTargetResidentTax] = useState(0);
-    const [targetStandardRemuneration, setTargetStandardRemuneration] = useState(0);
+
+    // --- 所属・入退社・ステータス ---
+    const [targetBranchId, setTargetBranchId] = useState(1);
+    const [targetStatus, setTargetStatus] = useState("active");
+    const [targetJoinDate, setTargetJoinDate] = useState(new Date().toISOString().split('T')[0]);
+    const [targetRetirementDate, setTargetRetirementDate] = useState("");
+    const [targetIsExecutive, setTargetIsExecutive] = useState(0); // 役員か
+
+    // =========================================================
+    // 3. 勤務ルール・時間設定
+    // =========================================================
+    // --- カレンダー・曜日 ---
+    const [targetPatternId, setTargetPatternId] = useState(1);
     const [targetWorkDays, setTargetWorkDays] = useState<Record<string, boolean>>({
         mon: false, tue: false, wed: false, thu: false, fri: false, sat: false, sun: false
     });
 
-    const [branches, setBranches] = useState<any[]>([]);
-    const [targetBranchId, setTargetBranchId] = useState(1); // 1（本店）をデフォルトに
-    const [annualWorkDays, setAnnualWorkDays] = useState(245); // デフォルト値（計算が終わるまで）
-    const [targetDailyHours, setTargetDailyHours] = useState(8.0); // 1日の所定労働時間
-    const [targetHours, setTargetHours] = useState(8);
-    const [targetMinutes, setTargetMinutes] = useState(0);
-    const [sortKey, setSortKey] = useState<"id" | "branch_id">("id");
-    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+    // --- 所定労働時間・始業 ---
+    const [targetScheduledIn, setTargetScheduledIn] = useState(""); // 標準始業
+    const [targetDailyHours, setTargetDailyHours] = useState(8.0);  // 1日の計算用(h)
+    const [targetHours, setTargetHours] = useState(8);              // 入力用(時)
+    const [targetMinutes, setTargetMinutes] = useState(0);           // 入力用(分)
 
-    const [calendarPatterns, setCalendarPatterns] = useState<CalendarPattern[]>([]);
-    const [targetPatternId, setTargetPatternId] = useState(1);
+    // --- フレックス・コアタイム ---
+    const [targetIsFlex, setTargetIsFlex] = useState(false);
+    const [targetCoreStart, setTargetCoreStart] = useState("");
+    const [targetCoreEnd, setTargetCoreEnd] = useState("");
 
-    const [targetIsExecutive, setTargetIsExecutive] = useState(0);
-    const [targetIsEmploymentInsEligible, setTargetIsEmploymentInsEligible] = useState(1);
-    const [targetIsOvertimeEligible, setTargetIsOvertimeEligible] = useState(1);
+    // =========================================================
+    // 4. 給与・手当・控除設定
+    // =========================================================
+    const [targetWageType, setTargetWageType] = useState("hourly"); // 時給/月給
+    const [targetWage, setTargetWage] = useState(1200);
+    const [targetIsOvertimeEligible, setTargetIsOvertimeEligible] = useState(1); // 残業代支給対象か
 
+    // --- 固定残業代（みなし） ---
     const [targetFixedOvertimeHours, setTargetFixedOvertimeHours] = useState(0);
     const [targetFixedOvertimeAmount, setTargetFixedOvertimeAmount] = useState(0);
 
-    // --- 検索・絞り込み用ステート ---
-    const [searchKeyword, setSearchKeyword] = useState("");
-    const [filterStatus, setFilterStatus] = useState<string[]>(["active", "on_leave"]); // 初期値は在籍と休職
-    const [filterBranchId, setFilterBranchId] = useState<string>("all");
+    // --- 通勤費・社保・税金 ---
+    const [targetCommuteType, setTargetCommuteType] = useState("daily");
+    const [targetCommuteAmount, setTargetCommuteAmount] = useState(0);
+    const [targetDependents, setTargetDependents] = useState(0);
+    const [targetResidentTax, setTargetResidentTax] = useState(0);
+    const [targetStandardRemuneration, setTargetStandardRemuneration] = useState(0); // 標準報酬月額
+    const [targetIsEmploymentInsEligible, setTargetIsEmploymentInsEligible] = useState(1); // 雇用保険
+
+    // =========================================================
+    // 5. 外部データ・計算用マスタ
+    // =========================================================
+    const [branches, setBranches] = useState<any[]>([]);
+    const [calendarPatterns, setCalendarPatterns] = useState<CalendarPattern[]>([]);
+    const [annualWorkDays, setAnnualWorkDays] = useState(245); // 計算結果（統計用）
     
     // 🆕 住所検索を実行する関数
     const handleZipSearch = async () => {
@@ -824,58 +854,130 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                                             </p>
                                         </div>
 
-                                        {/* 右側：1日の所定労働時間（任意設定） */}
-                                        <div style={{ flex: 1, paddingLeft: "15px", borderLeft: "1px solid #e2e8f0" }}>
+                                        {/* 右側：フレックス制 ＆ コアタイム設定 */}
+                                        <div style={{ flex: 1.2, paddingLeft: "15px", borderLeft: "1px solid #e2e8f0" }}>
                                             <div style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "5px" }}>
                                                 <input 
                                                     type="checkbox" 
-                                                    id="useDailyHours"
-                                                    // targetDailyHours が 0 より大きければチェック入りとみなす
-                                                    checked={targetDailyHours > 0} 
-                                                    onChange={(e) => {
-                                                        if (!e.target.checked) {
-                                                            setTargetDailyHours(0);
-                                                            setTargetHours(0);
-                                                            setTargetMinutes(0);
-                                                        } else {
-                                                            // デフォルト値として8時間をセット
-                                                            setTargetHours(8);
-                                                            setTargetMinutes(0);
-                                                            setTargetDailyHours(8.0);
-                                                        }
-                                                    }}
+                                                    id="isFlex"
+                                                    checked={targetIsFlex} 
+                                                    onChange={(e) => setTargetIsFlex(e.target.checked)}
                                                 />
-                                                <label htmlFor="useDailyHours" style={{ ...labelStyle, marginBottom: 0, cursor: "pointer" }}>
-                                                    1日の所定労働時間
+                                                <label htmlFor="isFlex" style={{ fontSize: "12px", fontWeight: "bold", color: "#2c3e50", cursor: "pointer" }}>
+                                                    フレックスタイム制を適用
                                                 </label>
                                             </div>
-                                            
-                                            <div style={{ display: "flex", alignItems: "center", gap: "8px", opacity: targetDailyHours === 0 ? 0.5 : 1 }}>
-                                                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+
+                                            {/* コアタイム入力欄 */}
+                                            <div style={{ opacity: targetIsFlex ? 1 : 0.4, transition: "opacity 0.2s" }}>
+                                                <span style={{ fontSize: "10px", color: "#64748b", display: "block", marginBottom: "4px" }}>コアタイム（任意）</span>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
                                                     <input 
-                                                        type="number" min="0" max="24" 
-                                                        value={targetHours} 
-                                                        onChange={e => setTargetHours(Number(e.target.value))} 
-                                                        disabled={targetDailyHours === 0}
-                                                        style={{ ...inputStyle, width: "70px", paddingRight: "25px", textAlign: "right", backgroundColor: targetDailyHours === 0 ? "#f1f5f9" : "#fff" }} 
+                                                        type="time" 
+                                                        value={targetCoreStart || ""} 
+                                                        onChange={e => setTargetCoreStart(e.target.value)}
+                                                        disabled={!targetIsFlex}
+                                                        style={{ ...inputStyle, width: "100px", padding: "4px" }}
                                                     />
-                                                    <span style={{ position: "absolute", right: "6px", fontSize: "10px", color: "#7f8c8d" }}>時</span>
-                                                </div>
-                                                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                                    <span style={{ color: "#94a3b8" }}>～</span>
                                                     <input 
-                                                        type="number" min="0" max="55" step="5" 
-                                                        value={targetMinutes} 
-                                                        onChange={e => setTargetMinutes(Number(e.target.value))} 
-                                                        disabled={targetDailyHours === 0}
-                                                        style={{ ...inputStyle, width: "70px", paddingRight: "25px", textAlign: "right", backgroundColor: targetDailyHours === 0 ? "#f1f5f9" : "#fff" }} 
+                                                        type="time" 
+                                                        value={targetCoreEnd || ""} 
+                                                        onChange={e => setTargetCoreEnd(e.target.value)}
+                                                        disabled={!targetIsFlex}
+                                                        style={{ ...inputStyle, width: "100px", padding: "4px" }}
                                                     />
-                                                    <span style={{ position: "absolute", right: "6px", fontSize: "10px", color: "#7f8c8d" }}>分</span>
                                                 </div>
                                             </div>
-                                            <p style={{ fontSize: "9px", color: "#94a3b8", marginTop: "4px", lineHeight: "1.4" }}>
-                                                ※有給休暇の支給額計算に使用します。未設定の場合は、直近3ヶ月の平均賃金等から算出します。
-                                            </p>
                                         </div>
+                                    </div>
+
+                                    {/* 2. 標準勤務・所定労働時間の設定エリア */}
+                                    <div style={{ 
+                                        marginBottom: "15px", 
+                                        paddingBottom: "15px", 
+                                        borderBottom: "1px solid #e2e8f0" // 👈 ここで契約曜日との間に横線を引いています
+                                    }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "5px", marginBottom: "8px" }}>
+                                            <input 
+                                                type="checkbox" 
+                                                id="useDailyHours"
+                                                checked={targetDailyHours > 0 || targetScheduledIn !== ""} 
+                                                onChange={(e) => {
+                                                    if (!e.target.checked) {
+                                                        setTargetDailyHours(0);
+                                                        setTargetHours(0);
+                                                        setTargetMinutes(0);
+                                                        setTargetScheduledIn("");
+                                                    } else {
+                                                        setTargetHours(8);
+                                                        setTargetMinutes(0);
+                                                        setTargetDailyHours(8.0);
+                                                        setTargetScheduledIn("09:00");
+                                                    }
+                                                }}
+                                            />
+                                            <label htmlFor="useDailyHours" style={{ ...labelStyle, marginBottom: 0, cursor: "pointer" }}>
+                                                標準始業時間・所定労働時間の設定
+                                            </label>
+                                        </div>
+                                            
+                                        <div style={{ 
+                                            display: "flex", 
+                                            gap: "20px", 
+                                            alignItems: "flex-end",
+                                            opacity: (targetDailyHours === 0 && targetScheduledIn === "") ? 0.5 : 1 
+                                        }}>
+                                            {/* 🆕 標準始業時刻 */}
+                                            <div>
+                                                <span style={{ fontSize: "10px", color: "#64748b", display: "block", marginBottom: "4px" }}>標準始業時刻</span>
+                                                <input 
+                                                    type="time" 
+                                                    value={targetScheduledIn} 
+                                                    onChange={e => setTargetScheduledIn(e.target.value)}
+                                                    disabled={targetDailyHours === 0 && targetScheduledIn === ""}
+                                                    style={{ ...inputStyle, width: "110px" }}
+                                                />
+                                            </div>
+
+                                            {/* 1日の所定労働時間 */}
+                                            <div>
+                                                <span style={{ fontSize: "10px", color: "#64748b", display: "block", marginBottom: "4px" }}>1日の所定労働時間</span>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                                    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                                        <input 
+                                                            type="number" min="0" max="24" 
+                                                            value={targetHours} 
+                                                            onChange={e => {
+                                                                const h = Number(e.target.value);
+                                                                setTargetHours(h);
+                                                                setTargetDailyHours(h + targetMinutes / 60);
+                                                            }} 
+                                                            disabled={targetDailyHours === 0 && targetScheduledIn === ""}
+                                                            style={{ ...inputStyle, width: "70px", paddingRight: "25px", textAlign: "right", backgroundColor: targetDailyHours === 0 ? "#f1f5f9" : "#fff" }} 
+                                                        />
+                                                        <span style={{ position: "absolute", right: "6px", fontSize: "10px", color: "#7f8c8d" }}>時</span>
+                                                    </div>
+                                                    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                                        <input 
+                                                            type="number" min="0" max="55" step="5" 
+                                                            value={targetMinutes} 
+                                                            onChange={e => {
+                                                                const m = Number(e.target.value);
+                                                                setTargetMinutes(m);
+                                                                setTargetDailyHours(targetHours + m / 60);
+                                                            }} 
+                                                            disabled={targetDailyHours === 0 && targetScheduledIn === ""}
+                                                            style={{ ...inputStyle, width: "70px", paddingRight: "25px", textAlign: "right", backgroundColor: targetDailyHours === 0 ? "#f1f5f9" : "#fff" }} 
+                                                        />
+                                                        <span style={{ position: "absolute", right: "6px", fontSize: "10px", color: "#7f8c8d" }}>分</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <p style={{ fontSize: "9px", color: "#94a3b8", marginTop: "6px", lineHeight: "1.4" }}>
+                                            ※始業時刻は一括反映ボタンの基準に使用します。所定時間は給与・有給計算の基礎となります。未設定の場合は、直近3ヶ月の平均賃金等から算出します。
+                                        </p>
                                     </div>
 
                                     {/* 新設：契約曜日の設定（主に時給制・有給計算用） */}

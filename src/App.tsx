@@ -8,6 +8,7 @@ import AttendanceManager from "./AttendanceManager";
 import PaySlipManager from "./PaySlipManager";
 import CustomItemManager from "./CustomItemManager";
 import BonusManager from "./BonusManager";
+import PaidLeaveManager from "./PaidLeaveManager";
 
 function App() {
   const [db, setDb] = useState<Database | null>(null);
@@ -16,8 +17,9 @@ function App() {
   const [activeTab, setActiveTab] = useState("company");
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   
-  const [targetYear, setTargetYear] = useState(2026);
-  const [targetMonth, setTargetMonth] = useState(4);
+  const now = new Date();
+  const [targetYear, setTargetYear] = useState(now.getFullYear());
+  const [targetMonth, setTargetMonth] = useState(now.getMonth() + 1);
   const isStaffReady = staffList.length > 0; // ✨ 従業員が1人以上いるか
 
   useEffect(() => {
@@ -128,45 +130,49 @@ function App() {
 
         await sqlite.execute(`
           CREATE TABLE IF NOT EXISTS staff (
+            -- 1. 基本プロフィール・ステータス
             id TEXT PRIMARY KEY, 
             name TEXT NOT NULL, 
             furigana TEXT, 
             birthday TEXT, 
-            join_date TEXT, 
-            health_ins_id TEXT,  -- 健康保険 被保険者番号
-            pension_num TEXT,   -- 基礎年金番号（または厚年整理番号）
-            employment_ins_num TEXT, -- 雇用保険 被保険者番号
-            my_number TEXT,     -- マイナンバー（取り扱い注意ですが項目として）
-            retirement_date TEXT, -- 🆕 追加：退職日
-            status TEXT DEFAULT 'active', -- 🆕 追加：状態（active: 在籍, on_leave: 休職, retired: 退職）
-            -- 1. 役員かどうか (0:従業員, 1:役員)
-            is_executive INTEGER DEFAULT 0,
-
-            -- 2. 雇用保険の対象か (0:対象外, 1:対象)
-            -- 役員なら基本0、兼務役員や一般社員なら1
-            is_employment_ins_eligible INTEGER DEFAULT 1,
-
-            -- 3. 残業代計算の対象か (0:対象外, 1:対象)
-            -- 管理監督者や役員なら0、一般社員なら1
-            is_overtime_eligible INTEGER DEFAULT 1,
             zip_code TEXT, 
             address TEXT, 
             phone TEXT, 
             mobile TEXT, 
-            wage_type TEXT DEFAULT 'hourly',
-            base_wage INTEGER NOT NULL, 
-            standard_remuneration INTEGER DEFAULT 0, -- 🆕 標準報酬月額（中ボス）
+            branch_id INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'active', -- active, on_leave, retired
+            join_date TEXT, 
+            retirement_date TEXT, 
+            is_executive INTEGER DEFAULT 0, -- 役員(0:従業員, 1:役員)
+
+            -- 2. 勤務ルール・時間設定（ここが重要！）
             calendar_pattern_id INTEGER DEFAULT 1,
+            work_days TEXT,                   -- 'mon,tue,wed...' 形式の文字列
+            scheduled_in TEXT DEFAULT '',     -- 標準始業時刻
+            scheduled_work_hours REAL DEFAULT 8.0, -- 1日の所定労働時間
+            is_flex INTEGER DEFAULT 0,        -- 🆕 フレックス制 (0:無, 1:有)
+            core_start TEXT DEFAULT '',       -- 🆕 コアタイム開始
+            core_end TEXT DEFAULT '',         -- 🆕 コアタイム終了
+
+            -- 3. 給与・手当・控除設定
+            wage_type TEXT DEFAULT 'hourly',  -- hourly, monthly
+            base_wage INTEGER NOT NULL, 
+            is_overtime_eligible INTEGER DEFAULT 1, -- 残業代対象か
+            fixed_overtime_hours REAL DEFAULT 0.0,
+            fixed_overtime_allowance INTEGER DEFAULT 0,
             commute_type TEXT DEFAULT 'none', 
             commute_amount INTEGER DEFAULT 0, 
-            branch_id INTEGER DEFAULT 0, 
             dependents INTEGER DEFAULT 0, 
             resident_tax INTEGER DEFAULT 0,
-            work_days TEXT,
-            scheduled_work_hours REAL DEFAULT 8.0, -- 1日の所定労働時間（例: 8.0）
-            monthly_work_days REAL DEFAULT 20.0,    -- 月平均の所定労働日数（例: 20.33）
-            fixed_overtime_hours REAL DEFAULT 0.0,    -- 固定残業時間（時間分）
-            fixed_overtime_allowance INTEGER DEFAULT 0, -- 固定残業代（円）
+            standard_remuneration INTEGER DEFAULT 0, -- 標準報酬月額
+            is_employment_ins_eligible INTEGER DEFAULT 1, -- 雇用保険対象
+
+            -- 4. その他・各種番号
+            health_ins_id TEXT,      -- 健康保険 被保険者番号
+            pension_num TEXT,        -- 基礎年金番号
+            employment_ins_num TEXT, -- 雇用保険 被保険者番号
+            my_number TEXT,          -- マイナンバー
+
             FOREIGN KEY (calendar_pattern_id) REFERENCES calendar_patterns(id)
           );
         `);
@@ -176,19 +182,63 @@ function App() {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             staff_id TEXT NOT NULL,
             work_date TEXT NOT NULL,
+            
+            -- 【修正入力・計算用】（TimeInputPairでいじる方）
             entry_time TEXT,
             exit_time TEXT,
             break_start TEXT,
             break_end TEXT,
             out_time TEXT,
             return_time TEXT,
+            
+            -- 【CSV生データ保持用】（表示専用・変更不可）
+            csv_entry_time TEXT,
+            csv_exit_time TEXT,
+            csv_break_start TEXT,
+            csv_break_end TEXT,
+            csv_out_time TEXT,
+            csv_return_time TEXT,
+
+            -- 【状態・有給・備考】
+            work_type TEXT DEFAULT 'normal',       -- normal, paid_full(全給), paid_half(半休)
+            paid_leave_hours REAL DEFAULT 0,       -- 時間有給（1時間なら1.0）
+            memo TEXT,                             -- 修正理由や備考
+
+            -- 【集計結果】
             work_hours REAL DEFAULT 0,
             night_hours REAL DEFAULT 0,
-            -- 🆕 将来の再現性のための「その時の単価」保存用カラム
             actual_base_wage INTEGER, 
             overtime_rate REAL,
             night_rate REAL,
+
             UNIQUE(staff_id, work_date),
+            FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE
+          );
+        `);
+
+        // --- 有給管理用のテーブル ---
+        // 1. 付与枠テーブル（時効管理のため、いつ何日分付与されたかを記録）
+        await sqlite.execute(`
+          CREATE TABLE IF NOT EXISTS paid_leave_grants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id TEXT NOT NULL,
+            name TEXT DEFAULT '法定有給',  -- 👈 名前カラムを追加
+            grant_date TEXT NOT NULL,    -- 付与日 (YYYY-MM-DD)
+            expiry_date TEXT NOT NULL,   -- 失効日 (YYYY-MM-DD)
+            days_granted REAL NOT NULL,  -- 付与日数
+            days_used REAL DEFAULT 0,    -- この付与枠から消化した日数
+            FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE
+          );
+        `);
+
+        // 2. 取得履歴テーブル（いつ休んだか）
+        await sqlite.execute(`
+          CREATE TABLE IF NOT EXISTS paid_leave_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id TEXT NOT NULL,
+            usage_date TEXT NOT NULL,    -- 取得日 (YYYY-MM-DD)
+            days_used REAL NOT NULL,     -- 取得日数 (1.0 や 0.5)
+            description TEXT,            -- 理由など（任意）
             FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE
           );
         `);
@@ -267,8 +317,13 @@ function App() {
             <>
               <li onClick={() => setActiveTab("calendar")} style={tabStyle(activeTab === "calendar")}>📅 会社カレンダー</li>
               <li onClick={() => setActiveTab("staff")} style={tabStyle(activeTab === "staff")}>👤 従業員詳細管理</li>
-              
               {/* --- 以下、従業員登録が必要なメニュー --- */}
+              <li 
+                onClick={() => isStaffReady && setActiveTab("paid_leave")} 
+                style={tabStyle(activeTab === "paid_leave", !isStaffReady)}
+              >
+                🏖 有給休暇管理
+              </li>
               <li 
                 onClick={() => isStaffReady && setActiveTab("custom_items")} 
                 style={tabStyle(activeTab === "custom_items", !isStaffReady)}
@@ -331,6 +386,9 @@ function App() {
             )}
             {activeTab === "staff" && db && (
               <StaffManager db={db} staffList={staffList} onDataChange={refreshData} />
+            )}
+            {activeTab === "paid_leave" && db && (
+              <PaidLeaveManager db={db} staffList={staffList} />
             )}
             {activeTab === "custom_items" && db && (
               <CustomItemManager db={db} staffList={staffList} />
