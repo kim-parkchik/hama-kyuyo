@@ -46,6 +46,15 @@ function App() {
           // 確実に id=1 で「標準」を入れる
           await sqlite.execute("INSERT INTO calendar_patterns (id, name) VALUES (1, '標準')");
         }
+        // 給与規定グループの初期化
+        const pGroups = await sqlite.select<any[]>("SELECT * FROM payroll_groups WHERE id = 1");
+        if (pGroups.length === 0) {
+          // ID=1: 全社共通（末締め / 当月25日払 / 当月払い）をデフォルトとして作成
+          await sqlite.execute(
+            `INSERT INTO payroll_groups (id, name, closing_day, is_next_month, payment_day) 
+            VALUES (1, '全社共通規定', 99, 0, 25)`
+          );
+        }
         // 本店がなければ作成（最初の1件目として作成）
         const existingHead = await sqlite.select<any[]>("SELECT * FROM branches");
         if (existingHead.length === 0) {

@@ -84,6 +84,9 @@ export default function BonusManager({ db, staffList }: Props) {
     const [newName, setNewName] = useState('夏季賞与');
     const [newYear, setNewYear] = useState(new Date().getFullYear());
     const [newMonth, setNewMonth] = useState(6);
+    const [newPaymentDate, setNewPaymentDate] = useState(
+        `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-10`
+    );
 
     // 賞与項目マスター
     const [items, setItems] = useState<BonusItem[]>([]);
@@ -101,6 +104,7 @@ export default function BonusManager({ db, staffList }: Props) {
     const selectedSetting = settings.find(s => s.id === selectedSettingId) ?? null;
 
     const [prevMonthTaxBases, setPrevMonthTaxBases] = useState<Record<string, number>>({});
+    
 
     // ── 初期ロード・データ取得 ─────────────────────────────────────
     
@@ -116,19 +120,19 @@ export default function BonusManager({ db, staffList }: Props) {
 
     // ② 賞与の選択（selectedSettingId）が切り替わった時に実行
     useEffect(() => {
-        if (selectedSettingId) {
-            // 社員別の入力値を読み込む
+        if (selectedSettingId && selectedSetting) {
             loadStaffValues(selectedSettingId);
 
-            // 【追加】選ばれた賞与に基づいて年度累計を計算する
-            if (selectedSetting) {
-                const fiscalYear = selectedSetting.target_month >= 4 
-                    ? selectedSetting.target_year 
-                    : selectedSetting.target_year - 1;
-                loadAnnualBonusTotals(fiscalYear);
-            }
+            const fiscalYear = selectedSetting.target_month >= 4 
+                ? selectedSetting.target_year 
+                : selectedSetting.target_year - 1;
+
+            // ★第2引数に現在のIDを渡す
+            loadAnnualBonusTotals(fiscalYear, selectedSettingId);
+
+            loadPrevMonthSalary(selectedSetting.target_year, selectedSetting.target_month);
         }
-    }, [selectedSettingId, items, selectedSetting]); // ここに書いた変数が変わるたびに動く
+    }, [selectedSettingId, items, selectedSetting]);
 
     // ── データ読み込み関数群 ──────────────────────────────────────
 
@@ -158,6 +162,7 @@ export default function BonusManager({ db, staffList }: Props) {
             JOIN bonus_settings ON bonus_staff_values.bonus_setting_id = bonus_settings.id
             WHERE bonus_settings.payment_date BETWEEN ? AND ?
             AND bonus_item_master.type = 'earning'
+            AND bonus_settings.id != ?
             GROUP BY staff_id`,
             [fiscalYearStart, fiscalYearEnd]
         );
@@ -182,13 +187,41 @@ export default function BonusManager({ db, staffList }: Props) {
         setStaffValues(map);
     };
 
+    // 前月の給与実績（社保控除後の課税対象額）を取得する
+    const loadPrevMonthSalary = async (year: number, month: number) => {
+        // 指摘の通り、ここでの year/month は bonus_settings に保存されたもの
+        let prevY = year;
+        let prevM = month - 1;
+        if (prevM === 0) { prevY--; prevM = 12; }
+
+        console.log(`Searching for salary record: ${prevY}年${prevM}月`); // デバッグ用
+
+        const res = await db.select<any[]>(
+            `SELECT staff_id, (taxable_amount - social_ins_total) as tax_base 
+            FROM salary_results 
+            WHERE CAST(target_year AS INTEGER) = ? AND CAST(target_month AS INTEGER) = ?`,
+            [prevY, prevM]
+        );
+
+        const map: Record<string, number> = {};
+        res.forEach(r => {
+            map[r.staff_id] = r.tax_base || 0;
+        });
+        setPrevMonthTaxBases(map);
+    };
+
     // ── CRUD ──────────────────────────────────────────────────
     const addSetting = async () => {
-        if (!newName.trim()) return;
-        // payment_date も含めて保存するように変更
+        if (!newName.trim() || !newPaymentDate) return;
+
+        // 支給日から年と月を抽出
+        const dateObj = new Date(newPaymentDate);
+        const targetYear = dateObj.getFullYear();
+        const targetMonth = dateObj.getMonth() + 1;
+
         await db.execute(
             "INSERT INTO bonus_settings (name, target_year, target_month, payment_date) VALUES (?, ?, ?, ?)",
-            [newName, newYear, newMonth, `${newYear}-${String(newMonth).padStart(2, '0')}-10`] // 仮の日付
+            [newName, targetYear, targetMonth, newPaymentDate]
         );
         await loadSettings();
     };
@@ -285,9 +318,8 @@ export default function BonusManager({ db, staffList }: Props) {
 
         // TODO: 本来はここで前月の確定給与データをDBから取得する
         // 現状は staff オブジェクトに prev_month_base があれば使い、なければ 0 とする
-        const prevMonthTaxBase = staff.prev_month_base || 0; 
+        const prevMonthTaxBase = prevMonthTaxBases[staff.id] || 0; 
 
-        // 所得税計算
         const incomeTax = calcBonusIncomeTax(
             Math.max(0, totalEarnings - socialTotal),
             prevMonthTaxBase, 
@@ -346,20 +378,9 @@ export default function BonusManager({ db, staffList }: Props) {
                                 <input type="text" value={newName} onChange={e => setNewName(e.target.value)}
                                     placeholder="夏季賞与・冬季賞与 など" style={inputS} />
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                                <div>
-                                    <label style={labelS}>支給年</label>
-                                    <select value={newYear} onChange={e => setNewYear(Number(e.target.value))} style={inputS}>
-                                        {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}年</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label style={labelS}>支給月</label>
-                                    <select value={newMonth} onChange={e => setNewMonth(Number(e.target.value))} style={inputS}>
-                                        {Array.from({ length: 12 }, (_, i) => i + 1).map(m =>
-                                            <option key={m} value={m}>{m}月</option>)}
-                                    </select>
-                                </div>
+                            <div>
+                                <label style={labelS}>支給日</label>
+                                <input type="date" value={newPaymentDate} onChange={e => setNewPaymentDate(e.target.value)} style={inputS} />
                             </div>
                             <button onClick={addSetting} style={btnS}>追加</button>
                         </div>

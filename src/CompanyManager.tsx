@@ -10,7 +10,7 @@ interface Props {
 
 export default function CompanyManager({ db, onSetupComplete }: Props) {
     // --- タブ管理 ---
-    const [activeSubTab, setActiveSubTab] = useState<"info" | "branches" | "rounding">("info");
+    const [activeSubTab, setActiveSubTab] = useState<"info" | "branches" | "rounding" | "payroll">("info");
     const [hasSavedOnce, setHasSavedOnce] = useState(false);
 
     // --- 会社情報用ステート ---
@@ -25,6 +25,15 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
     const [headPref, setHeadPref] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [isSearchingZip, setIsSearchingZip] = useState(false);
+
+    // --- 給与規定グループ用ステート ---
+    const [payrollGroups, setPayrollGroups] = useState<any[]>([]);
+    const [pgName, setPgName] = useState("");
+    const [pgClosingDay, setPgClosingDay] = useState(99); // 99を末日とする
+    const [pgIsNextMonth, setPgIsNextMonth] = useState(0); // 0:当月, 1:翌月
+    const [pgPaymentDay, setPgPaymentDay] = useState(25);
+    const [editingPgId, setEditingPgId] = useState<number | null>(null);
+    const [deletingPgId, setDeletingPgId] = useState<number | null>(null);
 
     // --- 支店管理用ステート ---
     const [branches, setBranches] = useState<any[]>([]);
@@ -135,6 +144,8 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
             setBranches(resB);
             const head = resB.find(b => b.id === 1);
             if (head) setHeadPref(head.prefecture || "");
+            const resPG = await db.select<any[]>("SELECT * FROM payroll_groups ORDER BY id ASC");
+            setPayrollGroups(resPG);
         } catch (e) { console.error("Load Error:", e); }
     };
 
@@ -170,6 +181,68 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
             if (onSetupComplete) onSetupComplete();
             setTimeout(() => setIsSaving(false), 1000);
         } catch (e) { setIsSaving(false); }
+    };
+
+    // 編集開始
+    const startEditPg = (pg: any) => {
+        setEditingPgId(pg.id);
+        setPgName(pg.name);
+        setPgClosingDay(pg.closing_day);
+        setPgIsNextMonth(pg.is_next_month);
+        setPgPaymentDay(pg.payment_day);
+    };
+
+    // フォームのリセット（キャンセル時）
+    const resetPgForm = () => {
+        setEditingPgId(null);
+        setPgName("");
+        setPgClosingDay(99);
+        setPgIsNextMonth(0);
+        setPgPaymentDay(25);
+    };
+
+    // 保存処理（新規登録・更新兼用）
+    const savePayrollGroup = async () => {
+        if (!pgName) return alert("グループ名を入力してください");
+
+        try {
+            if (editingPgId !== null) {
+                // 更新
+                await db.execute(
+                    `UPDATE payroll_groups SET name=?, closing_day=?, is_next_month=?, payment_day=? WHERE id=?`,
+                    [pgName, pgClosingDay, pgIsNextMonth, pgPaymentDay, editingPgId]
+                );
+            } else {
+                // 新規
+                await db.execute(
+                    "INSERT INTO payroll_groups (name, closing_day, is_next_month, payment_day) VALUES (?, ?, ?, ?)",
+                    [pgName, pgClosingDay, pgIsNextMonth, pgPaymentDay]
+                );
+            }
+            resetPgForm();
+            loadData();
+        } catch (e) {
+            console.error(e);
+            alert("保存に失敗しました");
+        }
+    };
+
+    const deletePayrollGroup = async (id: number) => {
+        try {
+            // 所属人数チェック
+            const staffCount = await db.select<any[]>("SELECT COUNT(*) as count FROM staff WHERE payroll_group_id = ?", [id]);
+            if ((staffCount[0]?.count || 0) > 0) {
+                alert("この規定には従業員が紐付いているため削除できません。");
+                setDeletingPgId(null);
+                return;
+            }
+
+            await db.execute("DELETE FROM payroll_groups WHERE id = ?", [id]);
+            setDeletingPgId(null);
+            loadData();
+        } catch (e) {
+            alert("削除に失敗しました");
+        }
     };
 
     const saveBranch = async () => {
@@ -463,6 +536,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                         <h2 style={{ color: "#2c3e50", margin: "0 0 15px 0", fontSize: "22px" }}>⚙️ 会社設定</h2>
                         <div style={{ display: "flex", borderBottom: "1px solid #ddd", gap: "5px" }}>
                             <button onClick={() => setActiveSubTab("info")} style={subTabStyle(activeSubTab === "info")}>🏢 基本情報</button>
+                            <button onClick={() => setActiveSubTab("payroll")} style={subTabStyle(activeSubTab === "payroll")}>📝 給与規定グループ</button>
                             <button onClick={() => setActiveSubTab("branches")} style={subTabStyle(activeSubTab === "branches")}>📍 支店リスト</button>
                             <button onClick={() => setActiveSubTab("rounding")} style={subTabStyle(activeSubTab === "rounding")}>🔢 端数処理</button>
                         </div>
@@ -519,29 +593,218 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                         </section>
                     )}
 
+                    {activeSubTab === "payroll" && (
+                        <section style={tabContentStyle}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "25px" }}>
+                                {/* 左側：グループ一覧 */}
+                                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                                    {payrollGroups.map((pg) => (
+                                        <div key={pg.id} style={{ 
+                                            ...branchCardStyle, 
+                                            borderLeft: "5px solid #10b981",
+                                            backgroundColor: editingPgId === pg.id ? "#fff9db" : "white" // 編集中の色
+                                        }}>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                                    {pg.id === 1 && <span style={{ ...headBadgeStyle, backgroundColor: "#10b981" }}>基本</span>}
+                                                    <strong>{pg.name}</strong>
+                                                </div>
+                                                <div style={{ fontSize: "12px", color: "#7f8c8d" }}>
+                                                    締日: {pg.closing_day === 99 ? "末日" : `${pg.closing_day}日`} / 
+                                                    支払: {pg.is_next_month ? "翌月" : "当月"} {pg.payment_day === 99 ? "末日" : `${pg.payment_day}日`}
+                                                </div>
+                                            </div>
+                                            
+                                            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                                                {editingPgId === pg.id ? (
+                                                    <span style={editingBadgeStyle}>📝 編集中...</span>
+                                                ) : (
+                                                    <>
+                                                        {/* 他の行を編集中、または他の行を削除待機中は操作不能にする */}
+                                                        {(editingPgId === null && (deletingPgId === null || deletingPgId === pg.id)) && (
+                                                            <>
+                                                                {deletingPgId === pg.id ? (
+                                                                    // 🗑️ 削除待機状態
+                                                                    <div style={{ 
+                                                                        display: "flex", 
+                                                                        alignItems: "center", 
+                                                                        marginRight: "12px" // ★ ここでセット全体を左に押し出します（編集ボタンの横幅分ほど）
+                                                                    }}>
+                                                                        <button 
+                                                                            onClick={() => deletePayrollGroup(pg.id)} 
+                                                                            style={{ 
+                                                                                ...deleteBtnStyle, 
+                                                                                backgroundColor: "#e74c3c", 
+                                                                                color: "white",
+                                                                                marginRight: "20px" // ボタン同士の適度な隙間
+                                                                            }}
+                                                                        >
+                                                                            本当に削除
+                                                                        </button>
+                                                                        <button 
+                                                                            onClick={() => setDeletingPgId(null)} 
+                                                                            style={{ ...editBtnStyle, backgroundColor: "#95a5a6", color: "white" }}
+                                                                        >
+                                                                            取消
+                                                                        </button>
+                                                                    </div>
+                                                                ) : (
+                                                                    // 通常状態
+                                                                    <>
+                                                                        <button onClick={() => startEditPg(pg)} style={editBtnStyle}>編集</button>
+                                                                        {pg.id !== 1 && (
+                                                                            <button onClick={() => setDeletingPgId(pg.id)} style={deleteBtnStyle}>削除</button>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* 右側：追加・編集フォーム */}
+                                <div style={{ ...addBoxStyle, border: editingPgId !== null ? "2px solid #f1c40f" : "1px dashed #cbd5e1" }}>
+                                    <h4 style={{ margin: "0 0 15px 0" }}>
+                                        {editingPgId !== null ? "📝 規定の編集" : "➕ グループの追加"}
+                                    </h4>
+                                    
+                                    <label style={miniLabelStyle}>グループ名</label>
+                                    <input value={pgName} onChange={e => setPgName(e.target.value)} style={{ ...inputStyle, marginBottom: "15px" }} />
+                                    
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "15px" }}>
+                                        <div>
+                                            <label style={miniLabelStyle}>締日</label>
+                                            <select value={pgClosingDay} onChange={e => setPgClosingDay(Number(e.target.value))} style={inputStyle}>
+                                                {[...Array(28)].map((_, i) => <option key={i+1} value={i+1}>{i+1}日</option>)}
+                                                <option value={99}>末日</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={miniLabelStyle}>支払時期</label>
+                                            <select value={pgIsNextMonth} onChange={e => setPgIsNextMonth(Number(e.target.value))} style={inputStyle}>
+                                                <option value={0}>当月払い</option>
+                                                <option value={1}>翌月払い</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <label style={miniLabelStyle}>支払日</label>
+                                    {/* 締日・支払日共通の選択肢生成 */}
+                                    <select 
+                                        value={pgPaymentDay} 
+                                        onChange={e => setPgPaymentDay(Number(e.target.value))} 
+                                        style={{ ...inputStyle, marginBottom: "20px" }}
+                                    >
+                                        {[...Array(28)].map((_, i) => (
+                                            <option key={i+1} value={i+1}>{i+1}日</option>
+                                        ))}
+                                        <option value={99}>末日</option>
+                                    </select>
+
+                                    <div style={{ display: "flex", gap: "10px" }}>
+                                        <button 
+                                            onClick={savePayrollGroup} 
+                                            style={{ ...btnStyle, flex: 1, backgroundColor: editingPgId !== null ? "#f1c40f" : "#10b981", color: editingPgId !== null ? "#000" : "#fff" }}
+                                        >
+                                            {editingPgId !== null ? "更新する" : "登録する"}
+                                        </button>
+                                        {editingPgId !== null && (
+                                            <button onClick={resetPgForm} style={{ ...btnStyle, flex: 1, backgroundColor: "#ccc" }}>
+                                                取消
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    )}
+
                     {activeSubTab === "branches" && (
                         <section style={tabContentStyle}>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "25px" }}>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                                    {branches.map((b) => (
-                                        <div key={b.id} style={{ ...branchCardStyle, borderLeft: b.id === 1 ? "5px solid #3498db" : "5px solid #94a3b8", backgroundColor: editingBranchId === b.id ? "#fff9db" : "white" }}>
-                                            <div style={{ flex: 1 }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                                    <span style={b.id === 1 ? headBadgeStyle : branchBadgeStyle}>{b.id === 1 ? "本店" : "支店"}</span>
-                                                    <strong>{b.name}</strong>
+                                    {branches.map((b) => {
+                                        const isDeleting = deletingBranchId === b.id;
+                                        const isEditing = editingBranchId === b.id;
+
+                                        return (
+                                            <div key={b.id} style={{ 
+                                                ...branchCardStyle, 
+                                                borderLeft: b.id === 1 ? "5px solid #3498db" : isDeleting ? "5px solid #e74c3c" : "5px solid #94a3b8", 
+                                                backgroundColor: isEditing ? "#fff9db" : isDeleting ? "#fff5f5" : "white",
+                                                display: "flex",
+                                                alignItems: "center"
+                                            }}>
+                                                <div style={{ flex: 1 }}>
+                                                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
+                                                        <span style={b.id === 1 ? headBadgeStyle : branchBadgeStyle}>
+                                                            {b.id === 1 ? "本店" : "支店"}
+                                                        </span>
+                                                        <strong>{b.name}</strong>
+                                                    </div>
+                                                    
+                                                    {/* 🏠 住所表示を2段に変更 */}
+                                                    <div style={{ fontSize: "12px", color: "#7f8c8d", lineHeight: "1.5" }}>
+                                                        <div>〒{b.zip_code}</div>
+                                                        <div style={{ wordBreak: "break-all" }}>
+                                                            {b.prefecture}{b.address}
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div style={{ fontSize: "12px", color: "#7f8c8d" }}>〒{b.zip_code} {b.prefecture}{b.address}</div>
+
+                                                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                                                    {b.id === 1 ? (
+                                                        // 🏠 本店の場合：2行に分けて右寄せで表示
+                                                        <div style={{ 
+                                                            fontSize: "11px", 
+                                                            color: "#94a3b8", 
+                                                            fontStyle: "italic", 
+                                                            lineHeight: "1.4",
+                                                            textAlign: "right", // 右側に寄せてボタン位置と合わせる
+                                                            paddingRight: "5px" 
+                                                        }}>
+                                                            ※本社の情報は「基本情報」<br />
+                                                            タブで編集できます
+                                                        </div>
+                                                    ) : (
+                                                        // 🏢 支店の場合：編集・削除ロジック
+                                                        editingBranchId === b.id ? (
+                                                            <span style={editingBadgeStyle}>📝 編集中...</span>
+                                                        ) : (
+                                                            <>
+                                                                {(editingBranchId === null && (deletingBranchId === null || isDeleting)) && (
+                                                                    <>
+                                                                        {isDeleting ? (
+                                                                            <div style={{ display: "flex", alignItems: "center", marginRight: "12px" }}>
+                                                                                <button 
+                                                                                    onClick={() => deleteBranch(b.id)} 
+                                                                                    style={{ ...deleteBtnStyle, backgroundColor: "#e74c3c", color: "white", marginRight: "20px" }}
+                                                                                >
+                                                                                    本当に削除
+                                                                                </button>
+                                                                                <button onClick={() => setDeletingBranchId(null)} style={{ ...editBtnStyle, backgroundColor: "#95a5a6", color: "white" }}>
+                                                                                    取消
+                                                                                </button>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <>
+                                                                                <button onClick={() => startEditBranch(b)} style={editBtnStyle}>編集</button>
+                                                                                <button onClick={() => setDeletingBranchId(b.id)} style={deleteBtnStyle}>削除</button>
+                                                                            </>
+                                                                        )}
+                                                                    </>
+                                                                )}
+                                                            </>
+                                                        )
+                                                    )}
+                                                </div>
                                             </div>
-                                            {b.id !== 1 && <button onClick={() => startEditBranch(b)} style={editBtnStyle}>編集</button>}
-                                            {b.id !== 1 && (
-                                                deletingBranchId === b.id ? (
-                                                    <button onClick={() => deleteBranch(b.id)} style={{...deleteBtnStyle, backgroundColor: "#e74c3c", color: "white", padding: "4px 8px", borderRadius: "4px"}}>本当に削除</button>
-                                                ) : (
-                                                    <button onClick={() => deleteBranch(b.id)} style={deleteBtnStyle}>削除</button>
-                                                )
-                                            )}
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                                 {/* 右：追加・編集ボックス */}
                                 <div style={{ ...addBoxStyle, border: editingBranchId !== null ? "2px solid #f1c40f" : "1px dashed #cbd5e1" }}>
@@ -750,3 +1013,18 @@ const inputBottomSpace = {
 const addBtnStyle = { flex: 1, backgroundColor: "#2ecc71", color: "white", border: "none", padding: "12px", borderRadius: "6px", cursor: "pointer", fontWeight: "bold" as const };
 const zipInputStyle = { ...inputStyle, borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none", position: "relative" as const, transition: "all 0.2s" };
 const zipBtnStyle = { ...subBtnStyle, borderTopLeftRadius: 0, borderBottomLeftRadius: 0, backgroundColor: "#f8fafc", transition: "all 0.2s" };
+const editingBadgeStyle = {
+  fontSize: "12px",
+  color: "#f39c12",
+  fontWeight: "bold" as const,
+  padding: "6px 12px",
+  backgroundColor: "#fff9db",
+  borderRadius: "4px",
+  border: "1px solid #f1c40f"
+};
+
+// 削除確認中の背景用スタイル
+const deletingRowStyle = {
+  backgroundColor: "#fff5f5",
+  borderLeft: "5px solid #e74c3c", // 削除中は赤色に変更
+};

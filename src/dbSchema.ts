@@ -66,6 +66,7 @@ export const DB_SCHEMAS = [
     join_date TEXT, 
     retirement_date TEXT, 
     is_executive INTEGER DEFAULT 0,
+    payroll_group_id INTEGER DEFAULT 1,
     calendar_pattern_id INTEGER DEFAULT 1,
     work_days TEXT,
     scheduled_in TEXT DEFAULT '',
@@ -88,7 +89,8 @@ export const DB_SCHEMAS = [
     pension_num TEXT,
     employment_ins_num TEXT,
     my_number TEXT,
-    FOREIGN KEY (calendar_pattern_id) REFERENCES calendar_patterns(id)
+    FOREIGN KEY (calendar_pattern_id) REFERENCES calendar_patterns(id),
+    FOREIGN KEY (payroll_group_id) REFERENCES payroll_groups(id)
   );`,
 
   // 7. 勤怠データ
@@ -215,5 +217,14 @@ export const DB_SCHEMAS = [
     FOREIGN KEY (bonus_setting_id) REFERENCES bonus_settings(id) ON DELETE CASCADE,
     FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE,
     FOREIGN KEY (item_id) REFERENCES bonus_item_master(id) ON DELETE CASCADE
+  );`,
+
+  // 17. 給与規定グループ（締日・支払日の管理）
+  `CREATE TABLE IF NOT EXISTS payroll_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    closing_day INTEGER NOT NULL,   -- 1~28 または 99(末日)
+    is_next_month INTEGER NOT NULL, -- 0:当月払い, 1:翌月払い
+    payment_day INTEGER NOT NULL    -- 1~31
   );`
 ];
