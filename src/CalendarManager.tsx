@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import Database from "@tauri-apps/plugin-sql";
 import { fetch } from "@tauri-apps/plugin-http";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 
 interface CalendarManagerProps {
@@ -194,13 +194,28 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
             alert("「標準」パターンは削除できません。");
             return;
         }
-        if (!window.confirm("このカレンダーパターンを削除しますか？\n（このパターンを使用している従業員の設定に影響が出る場合があります）")) return;
+
+        // ✨ window.confirm を ask に置き換え
+        const ok = await ask(
+            "このカレンダーパターンを削除しますか？\n（このパターンを使用している従業員の設定に影響が出る場合があります）",
+            { 
+                title: 'パターンの削除確認', 
+                kind: 'warning',
+                okLabel: '削除する',
+                cancelLabel: 'キャンセル'
+            }
+        );
+
+        if (!ok) return;
 
         try {
             await db.execute("DELETE FROM calendar_patterns WHERE id = ?", [currentPatternId]);
             setCurrentPatternId(1); // 削除したら標準に戻す
             await loadPatterns();
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error(e);
+            alert("パターンの削除に失敗しました。");
+        }
     };
 
     return (

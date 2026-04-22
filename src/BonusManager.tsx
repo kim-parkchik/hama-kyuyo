@@ -11,6 +11,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
+import { ask } from "@tauri-apps/plugin-dialog";
 import * as Master from './constants/salaryMaster2026';
 import { applyRounding } from './utils';
 
@@ -150,8 +151,8 @@ export default function BonusManager({ db, staffList }: Props) {
         setItems(res);
     };
 
-    // 【追加】年度累計を取得する関数
-    const loadAnnualBonusTotals = async (year: number) => {
+    // 【修正】第2引数 currentSettingId を追加して、自分自身を累計から除外できるようにする
+    const loadAnnualBonusTotals = async (year: number, currentSettingId: number) => {
         const fiscalYearStart = `${year}-04-01`;
         const fiscalYearEnd = `${year + 1}-03-31`;
 
@@ -162,13 +163,14 @@ export default function BonusManager({ db, staffList }: Props) {
             JOIN bonus_settings ON bonus_staff_values.bonus_setting_id = bonus_settings.id
             WHERE bonus_settings.payment_date BETWEEN ? AND ?
             AND bonus_item_master.type = 'earning'
-            AND bonus_settings.id != ?
+            AND bonus_settings.id != ? -- 自分自身の額は「これまでの累計」に含めない
             GROUP BY staff_id`,
-            [fiscalYearStart, fiscalYearEnd]
+            [fiscalYearStart, fiscalYearEnd, currentSettingId]
         );
 
         const map: Record<string, number> = {};
         res.forEach(r => {
+            // 健康保険の上限判定に使うため、1,000円未満切り捨てで保持
             map[r.staff_id] = Math.floor((r.raw_total || 0) / 1000) * 1000;
         });
         setAnnualBonusTotals(map);
@@ -227,7 +229,13 @@ export default function BonusManager({ db, staffList }: Props) {
     };
 
     const deleteSetting = async (id: number) => {
-        if (!confirm("この賞与設定と関連データをすべて削除しますか？")) return;
+        // ✨ window.confirm を ask に置き換え
+        const ok = await ask(
+            "この賞与設定と関連データをすべて削除しますか？\n（入力済みの社員別金額もすべて削除されます）",
+            { title: '賞与設定の削除', kind: 'warning', okLabel: '削除', cancelLabel: 'キャンセル' }
+        );
+        if (!ok) return;
+        
         await db.execute("DELETE FROM bonus_settings WHERE id = ?", [id]);
         if (selectedSettingId === id) setSelectedSettingId(null);
         await loadSettings();
