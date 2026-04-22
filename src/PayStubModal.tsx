@@ -84,7 +84,16 @@ export default function PayStubModal({ db, staff, attendanceData, year, month, c
     // ── 行数計算（左右を完全に同期させる） ──
     // 支給基本: 基本給(1) + 残業(1) + 深夜(1) + 通勤(1) + 任意手当(1) = 5行
     // 控除基本: 健保(1) + 介護(1) + 厚生(1) + 雇用(1) + 所得税(1) + 住民税(1) = 6行
-    const earningItemsCount   = 5 + (salary.absenceDeduction > 0 ? 1 : 0) + customEarningItems.length;
+    const earningItemsCount = 
+        1 // 基本給
+        + (salary.absenceDeduction > 0 ? 1 : 0)
+        + (salary.statutoryOvertimePay > 0 ? 1 : 0)
+        + (salary.standardOvertimePay > 0 ? 1 : 0)
+        + (salary.highOvertimePay > 0 ? 1 : 0)
+        + 1 // 深夜手当
+        + 1 // 通勤手当
+        + 1 // 任意手当
+        + customEarningItems.length;
     const deductionItemsCount = 6 + customDeductionItems.length;
   
     // 左右で多い方に合わせる（最低でも合計10行程度あると見栄えが良い）
@@ -173,16 +182,31 @@ export default function PayStubModal({ db, staff, attendanceData, year, month, c
                                 <thead><tr style={theadS}><th colSpan={2} style={thS}>支給項目</th></tr></thead>
                                 <tbody>
                                     <tr><td style={tdS}>基本給/時給分</td><td style={rtdS}>¥{salary.basePay.toLocaleString()}</td></tr>
+                                    
+                                    {/* 欠勤控除 */}
                                     {salary.absenceDeduction > 0 && (
-                                    <tr><td style={{...tdS, color: "#c0392b"}}>欠勤控除</td><td style={{...rtdS, color: "#c0392b"}}>－¥{salary.absenceDeduction.toLocaleString()}</td></tr>
+                                        <tr><td style={{...tdS, color: "#c0392b"}}>欠勤控除</td><td style={{...rtdS, color: "#c0392b"}}>－¥{salary.absenceDeduction.toLocaleString()}</td></tr>
                                     )}
-                                    <tr><td style={tdS}>残業手当</td><td style={rtdS}>¥{(salary.standardOvertimePay + salary.highOvertimePay).toLocaleString()}</td></tr>
+
+                                    {/* 残業手当の内訳分け */}
+                                    {salary.statutoryOvertimePay > 0 && (
+                                        <tr><td style={tdS}>時間外手当(法定内)</td><td style={rtdS}>¥{salary.statutoryOvertimePay.toLocaleString()}</td></tr>
+                                    )}
+                                    {salary.standardOvertimePay > 0 && (
+                                        <tr><td style={tdS}>時間外手当(25%割増)</td><td style={rtdS}>¥{salary.standardOvertimePay.toLocaleString()}</td></tr>
+                                    )}
+                                    {salary.highOvertimePay > 0 && (
+                                        <tr><td style={tdS}>時間外手当(50%割増)</td><td style={rtdS}>¥{salary.highOvertimePay.toLocaleString()}</td></tr>
+                                    )}
+
                                     <tr><td style={tdS}>深夜手当</td><td style={rtdS}>¥{salary.nightPay.toLocaleString()}</td></tr>
                                     <tr><td style={tdS}>通勤手当</td><td style={rtdS}>¥{salary.commutePay.toLocaleString()}</td></tr>
                                     <tr><td style={tdS}>{extras.allowanceName || "任意手当"}</td><td style={rtdS}>¥{salary.allowanceAmount.toLocaleString()}</td></tr>
+                                    
                                     {customEarningItems.map((item, i) => (
                                         <tr key={i}><td style={tdS}>{item.name}</td><td style={rtdS}>¥{item.amount.toLocaleString()}</td></tr>
                                     ))}
+
                                     {padRows(earningItemsCount, targetRows)}
                                     <tr style={totalRowS}><td style={tdS}>支給合計</td><td style={rtdS}>¥{salary.totalEarnings.toLocaleString()}</td></tr>
                                 </tbody>
