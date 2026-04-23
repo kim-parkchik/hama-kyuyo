@@ -1,4 +1,16 @@
 export const DB_SCHEMAS = [
+    // 0. ユーザー管理（ログイン・権限）
+  `CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    login_id TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'staff',
+    status TEXT DEFAULT 'active',
+    last_login TEXT,
+    created_at TEXT DEFAULT (DATETIME('now', 'localtime'))
+  );`,
+  
   // 1. 会社基本情報
   `CREATE TABLE IF NOT EXISTS company (
     id INTEGER PRIMARY KEY CHECK (id = 1),

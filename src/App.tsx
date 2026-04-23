@@ -2,6 +2,8 @@
 import Database from "@tauri-apps/plugin-sql";
 import { useEffect, useState } from "react";
 import { DB_SCHEMAS } from "./dbSchema";
+import FirstSetupScreen from "./FirstSetupScreen"; // 🆕
+import LoginScreen from "./LoginScreen"; // 🆕
 import CompanyManager from "./CompanyManager";
 import CalendarManager from "./CalendarManager";
 import StaffManager from "./StaffManager";
@@ -10,14 +12,19 @@ import PaySlipManager from "./PaySlipManager";
 import CustomItemManager from "./CustomItemManager";
 import BonusManager from "./BonusManager";
 import PaidLeaveManager from "./PaidLeaveManager";
+import UserManager from "./UserManager";
+
+export const APP_VERSION = "0.1.0";
 
 function App() {
   const [db, setDb] = useState<Database | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null); // 🆕 ログインユーザー
   const [staffList, setStaffList] = useState<any[]>([]);
   // 初期タブを "company" に変更し、セットアップ状態を管理する
   const [activeTab, setActiveTab] = useState("company");
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [isLoading, setIsLoading] = useState(true); // ✨ 初期化中フラグを追加
+  const [hasUser, setHasUser] = useState<boolean | null>(null);
 
   const now = new Date();
   const [targetYear, setTargetYear] = useState(now.getFullYear());
@@ -66,6 +73,9 @@ function App() {
         // 3. DBインスタンスを先にセット
         setDb(sqlite);
 
+        const users = await sqlite.select<any[]>("SELECT id FROM users");
+        setHasUser(users.length > 0);
+
         // 4. セットアップ状態の確認（関数にせず、ここで直接判定）
         const companyRes = await sqlite.select<any[]>("SELECT name FROM company WHERE id = 1");
         const branchRes = await sqlite.select<any[]>("SELECT prefecture FROM branches WHERE id = 1");
@@ -83,7 +93,7 @@ function App() {
       } catch (error) { 
         console.error("Database Init Error:", error); 
       } finally {
-        setIsLoading(false); // ✨ 成功しても失敗しても初期化終了
+        setIsLoading(false); // 全ての準備が整ってから isLoading を false に
       }
     };
     init();
@@ -120,10 +130,33 @@ function App() {
     return <div style={{ padding: "20px" }}>起動しています...</div>; // ✨ 起動中のチラつき防止
   }
 
+  // --- 表示の出し分け ---
+  if (hasUser === null) return <div>読み込み中...</div>;
+
+  if (!hasUser) {
+    // 初回起動：管理者登録画面
+    return <FirstSetupScreen db={db} onComplete={() => setHasUser(true)} />;
+  }
+
+  if (!currentUser) {
+    // 通常起動：ログイン画面
+    return <LoginScreen db={db} onLoginSuccess={(user) => setCurrentUser(user)} />;
+  }
+
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif", backgroundColor: "#f4f7f6" }}>
       <nav style={{ width: "220px", backgroundColor: "#2c3e50", color: "#ecf0f1", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "20px", fontSize: "20px", fontWeight: "bold", borderBottom: "1px solid #34495e" }}>⚓️ はま給与</div>
+        {/* 🆕 ユーザー名を表示 */}
+        <div style={{ padding: "0 20px 10px", fontSize: "12px", color: "#bdc3c7" }}>
+          👤 {currentUser.display_name}
+          <span 
+            onClick={() => setCurrentUser(null)} 
+            style={{ marginLeft: "10px", cursor: "pointer", textDecoration: "underline", fontSize: "10px" }}
+          >
+            ログアウト
+          </span>
+        </div>
         <ul style={{ listStyle: "none", padding: "10px", margin: 0 }}>
           <li onClick={() => setActiveTab("company")} style={tabStyle(activeTab === "company")}>🏢 会社設定</li>
           
@@ -167,23 +200,37 @@ function App() {
         </ul>
         
         {/* ガイドメッセージの出し分け */}
-        <div style={{ marginTop: "auto", padding: "20px", fontSize: "12px", color: "#95a5a6", lineHeight: "1.6" }}>
+        {/* --- 修正箇所 --- */}
+        <div style={{ flex: 1 }}></div>
+
+        {/* ⚙️ 管理者専用メニュー */}
+        {currentUser.role === 'admin' && (
+          <ul style={{ listStyle: "none", padding: "10px", margin: 0, borderTop: "1px solid #34495e" }}>
+            <li 
+              onClick={() => setActiveTab("user_management")} 
+              style={tabStyle(activeTab === "user_management")}
+            >
+              ⚙️ ユーザー管理
+            </li>
+          </ul>
+        )}
+
+        {/* ガイドメッセージの出し分け：marginTop: "auto" を削除 */}
+        <div style={{ padding: "20px", fontSize: "12px", color: "#95a5a6", lineHeight: "1.6" }}>
           {!isSetupComplete ? (
             <>💡 会社名と本店の所在地を設定すると、基本機能が解放されます。</>
           ) : !isStaffReady ? (
             <div style={{ color: "#f1c40f" }}>💡 次は「従業員管理」から、最初の1人を登録しましょう！</div>
-          ) : (
-            <div style={{ 
-              marginTop: "auto", 
-              padding: "20px", 
-              fontSize: "11px", 
-              color: "#bdc3c7", 
-              textAlign: "right",
-              fontFamily: "monospace" // バージョン表記っぽく
-            }}>
-              ver 0.0.1
-            </div>
-          )}
+          ) : null}
+          <div style={{ 
+            padding: "10px 0", // 余白を微調整
+            fontSize: "11px", 
+            color: "#bdc3c7", 
+            textAlign: "right",
+            fontFamily: "monospace" 
+          }}>
+            ver {APP_VERSION}
+          </div>
         </div>
       </nav>
 
@@ -229,6 +276,9 @@ function App() {
               />
             )}
           </>
+        )}
+        {activeTab === "user_management" && db && (
+          <UserManager db={db} />
         )}
       </div>
     </div>

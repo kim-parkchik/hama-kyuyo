@@ -271,7 +271,13 @@ export default function AttendanceManager({
         URL.revokeObjectURL(url);
     };
 
-    const handleImportCSV = () => {
+    // 修正版 handleImportCSV
+    const handleImportCSV = async () => {
+        // 🆕 Tauri標準のファイル選択ダイアログを使う場合 (推奨)
+        // import { open } from '@tauri-apps/plugin-dialog';
+        // const selected = await open({ filters: [{ name: 'CSV', extensions: ['csv'] }] });
+        
+        // 現状の input 要素を使う方法を継続する場合の改善
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.csv';
@@ -280,17 +286,21 @@ export default function AttendanceManager({
             const file = e.target.files[0];
             if (!file) return;
 
+            // 🆕 文字コード対策：Shift-JISかUTF-8か不安な場合は
+            // FileReaderの第2引数に 'shift-jis' を指定するか、パース前に確認
             const reader = new FileReader();
             reader.onload = async (event) => {
                 try {
                     const text = event.target?.result as string;
+                    // parseAttendanceCSV が適切に配列を返しているか確認
                     const rows = parseAttendanceCSV(text);
                     
                     if (rows.length === 0) return;
 
-                    // 🆕 最初の行を見て、Full形式（詳細データ）かRaw形式（打刻ログ）か判定
                     const isFullFormat = "区分" in rows[0] || "名前" in rows[0];
 
+                    // 🆕 高速化：大量の INSERT はトランザクションを使いたいところですが、
+                    // plugin-sql では直接 BEGIN/COMMIT を使うか、ループ内で逐次実行します。
                     for (const row of rows) {
                         const sId = row["スタッフID"];
                         const date = row["日付"];
@@ -299,12 +309,12 @@ export default function AttendanceManager({
                         const staff = staffList.find(s => String(s.id) === String(sId));
                         if (!staff) continue;
 
-                        // 共通の計算（出勤・退勤等から実働と深夜を算出）
-                        // ※Full形式であっても、念のため再計算して整合性を取ります
+                        // 時間の計算
                         const { total, night } = calcDetailedDiff(
                             row["出勤"], row["退勤"], row["休憩始"], row["休憩終"], row["外出"], row["戻り"]
                         );
 
+                        // 🆕 既存データを削除して入れ直す（重複エラー防止）
                         await db.execute("DELETE FROM attendance WHERE staff_id = ? AND work_date = ?", [sId, date]);
                         
                         await db.execute(
@@ -319,25 +329,24 @@ export default function AttendanceManager({
                             [
                                 sId, date, 
                                 row["出勤"] || "", row["退勤"] || "", row["休憩始"] || "", row["休憩終"] || "", row["外出"] || "", row["戻り"] || "",
-                                // 🆕 Rawデータとして保存（インポート時点の値を「生データ」として記録）
                                 row["出勤"] || "", row["退勤"] || "", row["休憩始"] || "", row["休憩終"] || "", row["外出"] || "", row["戻り"] || "",
                                 Number(total), Number(night), 
-                                staff.wage_type === "monthly" ? 0 : staff.base_wage, 1.25, 0.25,
-                                // 🆕 Full形式ならCSVの値、Raw形式ならデフォルト値を採用
+                                staff.wage_type === "monthly" ? 0 : staff.base_wage, 
+                                1.25, 0.25,
                                 isFullFormat ? (row["区分"] || "normal") : "normal",
                                 isFullFormat ? (Number(row["有給h"]) || 0) : 0,
                                 isFullFormat ? (row["備考"] || "") : ""
                             ]
                         );
                     }
-                    alert(`${isFullFormat ? "詳細データ" : "打刻ログ"}として ${rows.length} 件インポートしました。`);
-                    loadMonthlyData(); 
+                    alert("インポートが完了しました。");
+                    loadMonthlyData(); // 画面を更新
                 } catch (err) {
                     console.error("インポートエラー:", err);
-                    alert("CSVの解析に失敗しました。形式を確認してください。");
+                    alert("CSV読み込み中にエラーが発生しました。");
                 }
             };
-            reader.readAsText(file);
+            reader.readAsText(file, 'utf-8'); // 必要に応じて 'shift-jis'
         };
         input.click();
     };
@@ -779,11 +788,11 @@ export default function AttendanceManager({
                             <tr style={{ backgroundColor: "#fcfcfc", borderBottom: "2px solid #eee" }}>
                                 <th style={{ ...thStyle, width: "100px" }}>日付</th>
                                 <th style={thStyle}>出勤</th>
-                                <th style={{ ...thStyle, paddingRight: "30px" }}>退勤</th> {/* 隙間 */}
+                                <th style={{ ...thStyle, paddingRight: "30px" }}>退勤</th>
                                 <th style={thStyle}>休憩開始</th>
-                                <th style={{ ...thStyle, paddingRight: "30px" }}>休憩終了</th> {/* 隙間 */}
+                                <th style={{ ...thStyle, paddingRight: "30px" }}>休憩終了</th>
                                 <th style={thStyle}>外出</th>
-                                <th style={{ ...thStyle, paddingRight: "30px" }}>戻り</th> {/* 隙間 */}
+                                <th style={{ ...thStyle, paddingRight: "30px" }}>戻り</th>
                                 <th style={thStyle}>実働時間</th>
                                 <th style={thStyle}>操作</th>
                             </tr>
@@ -899,13 +908,11 @@ export default function AttendanceManager({
 
                                 return (
                                     <Fragment key={dateStr}>
-                                        {/* --- 1段目：CSV打刻データ --- */}
                                         <tr style={{ 
                                             // 🆕 計算済みの rowBgColor を使う
                                             backgroundColor: rowBgColor, 
                                             borderTop: "3px solid #eee" 
                                         }}>
-                                            {/* ① 日付 (3行ぶち抜き) */}
                                             <td rowSpan={3} style={{ ...tdStyle, fontWeight: "bold", borderRight: "1px solid #eee", verticalAlign: "top", width: "100px" }}>
                                                 <div style={{ 
                                                     fontSize: "14px", 
@@ -935,8 +942,6 @@ export default function AttendanceManager({
                                                     <option value="absent">欠勤</option>
                                                 </select>
                                             </td>
-
-                                            {/* CSVデータエリア (6セル分) */}
                                             <td style={{ ...tdTightStyle, color: "#94a3b8" }}>
                                                 <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(入)</span>
                                                 {row.csvIn || rowData.csv_entry_time || "--:--"}
@@ -951,8 +956,6 @@ export default function AttendanceManager({
                                             <td colSpan={2} style={{ ...tdTightStyle, fontSize: "11px", color: "#bdc3c7" }}>
                                                 外出(CSV): {rowData.csv_out_time || "--:--"} ~ {rowData.csv_return_time || "--:--"}
                                             </td>
-
-                                            {/* ② 実働時間 (3行ぶち抜き) */}
                                             <td rowSpan={3} style={{ ...tdStyle, width: "120px", borderLeft: "1px solid #eee", textAlign: "center" }}>
                                                 <div style={{ fontWeight: "bold", color: row.isSaved ? (row.savedHours > 8 ? "#e74c3c" : "#2ecc71") : "#3498db" }}>
                                                     {row.isSaved ? `${Math.floor(row.savedHours)}h ${Math.round((row.savedHours % 1) * 60)}m` : (isAllInputValid ? `🚀 ${currentHours}h` : "-")}
@@ -961,8 +964,6 @@ export default function AttendanceManager({
                                                     <div style={{ fontSize: "10px", color: "#9b59b6" }}>深夜: {row.nightHours}h</div>
                                                 )}
                                             </td>
-
-                                            {/* ③ 操作ボタン (3行ぶち抜き) */}
                                             <td rowSpan={3} style={{ ...tdStyle, textAlign: "center", width: "100px", borderLeft: "1px solid #eee" }}>
                                                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", alignItems: "center" }}>
                                                     
@@ -998,13 +999,11 @@ export default function AttendanceManager({
                                             </td>
                                         </tr>
 
-                                        {/* --- 2段目：修正入力 --- */}
                                         <tr style={{ 
                                             backgroundColor: (row.workType === "paid_full" || row.workType === "absent") ? "#f9f9f9" : "#fff",
                                             opacity: (row.workType === "paid_full" || row.workType === "absent") ? 0.5 : 1,
                                             pointerEvents: (row.workType === "paid_full" || row.workType === "absent") ? "none" : "auto"
                                         }}>
-                                            {/* 日付・実働・操作のセルは rowSpan で埋まっているので、ここはいきなり入力欄から開始 */}
                                             <td style={tdTightStyle}><TimeInputPair value={row.in} onChange={val => handleCellChange(dateStr, 'in', val)} /></td>
                                             <td style={tdSpacerStyle}><TimeInputPair value={row.out} onChange={val => handleCellChange(dateStr, 'out', val)} /></td>
                                             <td style={tdTightStyle}><TimeInputPair value={row.bStart} onChange={val => handleCellChange(dateStr, 'bStart', val)} /></td>
@@ -1021,9 +1020,7 @@ export default function AttendanceManager({
                                             </td>
                                         </tr>
 
-                                        {/* --- 3段目：備考欄 --- */}
                                         <tr style={{ backgroundColor: "#fdfdfd", borderBottom: "1px solid #eee" }}>
-                                            {/* 6セル分をぶち抜いて備考欄にする */}
                                             <td colSpan={6} style={{ padding: "6px 12px", pointerEvents: "auto" }}>
                                                 <div style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%" }}>
                                                     <span style={{ 
