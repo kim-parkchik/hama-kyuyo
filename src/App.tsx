@@ -22,7 +22,20 @@ import StaffManager from "./features/settings/StaffManager";
 import UserManager from "./features/settings/UserManager";
 import CustomItemManager from "./features/settings/CustomItemManager";
 
+export const APP_NAME = "Q";
 export const APP_VERSION = "0.1.0";
+
+const TAB_NAMES: Record<string, string> = {
+  company: "🏢 会社設定",
+  calendar: "📅 会社カレンダー",
+  staff: "👤 従業員詳細管理",
+  paid_leave: "🏖 有給休暇管理",
+  custom_items: "⚙️ 給与項目設定",
+  attendance: "⏱️ 勤怠・月次給与",
+  bonus: "💰 賞与計算",
+  payslip: "📄 明細書出力",
+  user_management: "⚙️ ユーザー管理"
+};
 
 function App() {
   const [db, setDb] = useState<Database | null>(null);
@@ -38,6 +51,7 @@ function App() {
   const [targetYear, setTargetYear] = useState(now.getFullYear());
   const [targetMonth, setTargetMonth] = useState(now.getMonth() + 1);
   const isStaffReady = staffList.length > 0; // ✨ 従業員が1人以上いるか
+  const [companyName, setCompanyName] = useState("");
 
   // スタイルの注入は一度だけ行う
   useEffect(() => {
@@ -87,6 +101,11 @@ function App() {
         // 4. セットアップ状態の確認（関数にせず、ここで直接判定）
         const companyRes = await sqlite.select<any[]>("SELECT name FROM company WHERE id = 1");
         const branchRes = await sqlite.select<any[]>("SELECT prefecture FROM branches WHERE id = 1");
+
+        // 会社名が存在すれば state に入れる
+        if (companyRes.length > 0 && companyRes[0].name.trim() !== "") {
+          setCompanyName(companyRes[0].name); // ★ ここでセット
+        }
         
         const hasName = companyRes.length > 0 && companyRes[0].name.trim() !== "";
         const hasPref = branchRes.length > 0 && branchRes[0].prefecture !== "";
@@ -110,6 +129,13 @@ function App() {
   // --- 会社設定側から完了を通知された時の処理 ---
   const handleSetupComplete = async () => {
     setIsSetupComplete(true);
+    
+    if (db) {
+      // 最新の会社名を取得して反映
+      const res = await db.select<any[]>("SELECT name FROM company WHERE id = 1");
+      if (res.length > 0) setCompanyName(res[0].name);
+    }
+    
     await refreshData();
   };
 
@@ -154,16 +180,18 @@ function App() {
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif", backgroundColor: "#f4f7f6" }}>
       <nav style={{ width: "220px", backgroundColor: "#2c3e50", color: "#ecf0f1", display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "20px", fontSize: "20px", fontWeight: "bold", borderBottom: "1px solid #34495e" }}>⚓️ はま給与</div>
-        {/* 🆕 ユーザー名を表示 */}
-        <div style={{ padding: "0 20px 10px", fontSize: "12px", color: "#bdc3c7" }}>
-          👤 {currentUser.display_name}
-          <span 
-            onClick={() => setCurrentUser(null)} 
-            style={{ marginLeft: "10px", cursor: "pointer", textDecoration: "underline", fontSize: "10px" }}
-          >
-            ログアウト
-          </span>
+        {/* --- ナビゲーション最上部 --- */}
+        <div style={{ 
+          padding: "20px", 
+          fontSize: "18px", 
+          fontWeight: "bold", 
+          borderBottom: "1px solid #34495e",
+          color: "#ecf0f1",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis" // 長い社名を三点リーダーで省略
+        }}>
+          {isSetupComplete ? `🏢 ${companyName}` : APP_NAME}
         </div>
         <ul style={{ listStyle: "none", padding: "10px", margin: 0 }}>
           <li onClick={() => setActiveTab("company")} style={tabStyle(activeTab === "company")}>🏢 会社設定</li>
@@ -231,63 +259,107 @@ function App() {
             <div style={{ color: "#f1c40f" }}>💡 次は「従業員管理」から、最初の1人を登録しましょう！</div>
           ) : null}
           <div style={{ 
-            padding: "10px 0", // 余白を微調整
-            fontSize: "11px", 
+            padding: "10px 20px", 
+            fontSize: "10px", 
             color: "#bdc3c7", 
             textAlign: "right",
-            fontFamily: "monospace" 
+            fontFamily: "monospace",
+            opacity: 0.7 
           }}>
-            ver {APP_VERSION}
+            {APP_NAME} ver {APP_VERSION}
           </div>
         </div>
       </nav>
+      {/* --- 右側：ヘッダー ＋ メインコンテンツ --- */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        
+        {/* 🆕 右上のヘッダーエリア */}
+        <header style={{ 
+          height: "60px", 
+          backgroundColor: "#fff", 
+          borderBottom: "1px solid #e0e0e0", 
+          display: "flex", 
+          alignItems: "center", 
+          justifyContent: "space-between", // 両端に広げる
+          padding: "0 30px",
+          flexShrink: 0
+        }}>
+          {/* 左側：パンくずリスト風の表示 */}
+          <div style={{ fontSize: "16px", color: "#606266", display: "flex", alignItems: "center" }}>
+            <span style={{ fontWeight: "bold", color: "#303133" }}>
+              {TAB_NAMES[activeTab] || "ホーム"}
+            </span>
+          </div>
+          <div style={{ fontSize: "14px", color: "#333", display: "flex", alignItems: "center" }}>
+            <span style={{ marginRight: "15px", fontWeight: "500" }}>👤 {currentUser.display_name} さん</span>
+            <button 
+              onClick={() => setCurrentUser(null)} 
+              style={{ 
+                padding: "4px 12px", 
+                fontSize: "12px", 
+                cursor: "pointer", 
+                backgroundColor: "#fff", 
+                border: "1px solid #dcdfe6", 
+                borderRadius: "4px", 
+                color: "#606266",
+                transition: "all 0.2s"
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.backgroundColor = "#f5f7fa")}
+              onMouseOut={(e) => (e.currentTarget.style.backgroundColor = "#fff")}
+            >
+              ログアウト
+            </button>
+          </div>
+        </header>
 
-      <div style={{ flex: 1, padding: "30px", overflowY: "auto" }}>
-        {activeTab === "company" && db && (
-          <CompanyManager db={db} onSetupComplete={handleSetupComplete} />
-        )}
+        {/* 下：コンテンツ表示エリア */}
+        <main style={{ flex: 1, padding: "30px", overflowY: "auto" }}>
+          {activeTab === "company" && db && (
+            <CompanyManager db={db} onSetupComplete={handleSetupComplete} />
+          )}
 
-        {/* セットアップ未完了なら他のコンポーネントは表示させない（ガード） */}
-        {isSetupComplete && (
-          <>
-            {activeTab === "calendar" && db && (
-              <CalendarManager db={db} />
-            )}
-            {activeTab === "staff" && db && (
-              <StaffManager db={db} staffList={staffList} onDataChange={refreshData} />
-            )}
-            {activeTab === "paid_leave" && db && (
-              <PaidLeaveManager db={db} staffList={staffList} />
-            )}
-            {activeTab === "custom_items" && db && (
-              <CustomItemManager db={db} staffList={staffList} />
-            )}
-            {activeTab === "attendance" && db && (
-              <AttendanceManager 
-                db={db} 
-                staffList={staffList}
-                targetYear={targetYear}
-                setTargetYear={setTargetYear}
-                targetMonth={targetMonth}
-                setTargetMonth={setTargetMonth}
-              />
-            )}
-            {activeTab === "bonus" && db && (
-              <BonusManager db={db} staffList={staffList} />
-            )}
-            {activeTab === "payslip" && db && (
-              <PaySlipManager 
-                db={db} 
-                staffList={staffList} 
-                targetYear={targetYear} 
-                targetMonth={targetMonth} 
-              />
-            )}
-          </>
-        )}
-        {activeTab === "user_management" && db && (
-          <UserManager db={db} />
-        )}
+          {/* セットアップ未完了なら他のコンポーネントは表示させない（ガード） */}
+          {isSetupComplete && (
+            <>
+              {activeTab === "calendar" && db && (
+                <CalendarManager db={db} />
+              )}
+              {activeTab === "staff" && db && (
+                <StaffManager db={db} staffList={staffList} onDataChange={refreshData} />
+              )}
+              {activeTab === "paid_leave" && db && (
+                <PaidLeaveManager db={db} staffList={staffList} />
+              )}
+              {activeTab === "custom_items" && db && (
+                <CustomItemManager db={db} staffList={staffList} />
+              )}
+              {activeTab === "attendance" && db && (
+                <AttendanceManager 
+                  db={db} 
+                  staffList={staffList}
+                  targetYear={targetYear}
+                  setTargetYear={setTargetYear}
+                  targetMonth={targetMonth}
+                  setTargetMonth={setTargetMonth}
+                />
+              )}
+              {activeTab === "bonus" && db && (
+                <BonusManager db={db} staffList={staffList} />
+              )}
+              {activeTab === "payslip" && db && (
+                <PaySlipManager 
+                  db={db} 
+                  staffList={staffList} 
+                  targetYear={targetYear} 
+                  targetMonth={targetMonth} 
+                />
+              )}
+            </>
+          )}
+          {activeTab === "user_management" && db && (
+            <UserManager db={db} />
+          )}
+        </main>
       </div>
     </div>
   );
