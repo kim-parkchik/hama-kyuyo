@@ -8,7 +8,7 @@ export default function FirstSetupScreen({ db, onComplete }: { db: any, onComple
     return (
         <div style={S.containerStyle}>
             <div style={S.cardStyle}>
-                <h2 style={{ textAlign: "center", color: "#2c3e50" }}>⚓️ はま給与 セットアップ</h2>
+                <h2 style={{ textAlign: "center", color: "#2c3e50" }}>Q セットアップ</h2>
                 <p style={{ textAlign: "center", color: "#95a5a6", fontSize: "14px" }}>
                     最初に使用する管理者アカウントを作成します。
                 </p>

@@ -7,7 +7,7 @@ export default function LoginScreen({ db, onLoginSuccess }: { db: any, onLoginSu
   return (
     <div style={S.containerStyle}>
       <div style={S.cardStyle}>
-        <h2 style={{ textAlign: "center", marginBottom: "30px", color: "#34495e" }}>⚓️ はま給与 ログイン</h2>
+        <h2 style={{ textAlign: "center", marginBottom: "30px", color: "#34495e" }}>Q ログイン</h2>
         
         <form onSubmit={handleLogin}>
           <div style={S.inputGroupStyle}>
