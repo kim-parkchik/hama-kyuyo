@@ -14,6 +14,7 @@ import {
   UserCog, 
   LogOut 
 } from 'lucide-react';
+import * as S from "./App.styles";
 import { DB_SCHEMAS } from "./types/dbSchema";
 import { HOLIDAY_CSV_URL_DEFAULT } from "./constants/salaryMaster2026";
 
@@ -214,38 +215,17 @@ function App() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif", backgroundColor: "#f4f7f6" }}>
-      <nav style={{ width: "220px", backgroundColor: "#2c3e50", color: "#ecf0f1", display: "flex", flexDirection: "column" }}>
+    <div style={S.container}>
+      <nav style={S.sidebar}>
         {/* --- ナビゲーション最上部 --- */}
-        <div style={{ 
-          padding: "20px", 
-          fontSize: "18px", 
-          fontWeight: "bold", 
-          borderBottom: "1px solid #34495e",
-          color: "#ecf0f1",
-          display: "flex",
-          alignItems: "center",
-          gap: "10px",
-          height: "70px" // 高さを固定すると安定します
-        }}>
+        <div style={S.sidebarHeader}>
           {/* セットアップ未完了時はアイコンを黄色にして注意を引く */}
           <Building2 size={24} color={isSetupComplete ? "#3498db" : "#f1c40f"} />
-          
-          <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <span style={{ 
-              overflow: "hidden", 
-              textOverflow: "ellipsis", 
-              whiteSpace: "nowrap",
-              fontSize: isSetupComplete ? "16px" : "14px",
-              color: isSetupComplete ? "#ecf0f1" : "#f1c40f"
-            }}>
-              {isSetupComplete ? companyName : "初期設定が必要です"}
-            </span>
-          </div>
+          <span>{isSetupComplete ? companyName : "初期設定が必要です"}</span>
         </div>
-        <ul style={{ listStyle: "none", padding: "10px", margin: 0 }}>
+        <ul style={S.menuList}>
           {/* 共通のリストアイテム描画関数（DRYに書くなら） */}
-          <li onClick={() => setActiveTab("company")} style={tabStyle(activeTab === "company")}>
+          <li onClick={() => setActiveTab("company")} style={S.getTabStyle(activeTab === "company")}>
              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 {TAB_ICONS.company}
                 <span>{TAB_NAMES.company}</span>
@@ -294,17 +274,15 @@ function App() {
         {/* --- 修正箇所 --- */}
         <div style={{ flex: 1 }}></div>
 
-        {/* ⚙️ 管理者専用メニュー */}
-        {currentUser.role === 'admin' && (
-          <ul style={{ listStyle: "none", padding: "10px", margin: 0, borderTop: "1px solid #34495e" }}>
-            <li onClick={() => setActiveTab("user_management")} style={tabStyle(activeTab === "user_management")}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                {TAB_ICONS.user_management}
-                <span>{TAB_NAMES.user_management}</span>
-              </div>
-            </li>
-          </ul>
-        )}
+        {/* 🆕 システム設定メニュー（adminなら常時、staffなら常時表示） */}
+        <ul style={{ listStyle: "none", padding: "10px", margin: 0, borderTop: "1px solid #34495e" }}>
+          <li onClick={() => setActiveTab("user_management")} style={tabStyle(activeTab === "user_management")}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              {TAB_ICONS.user_management}
+              <span>{TAB_NAMES.user_management}</span>
+            </div>
+          </li>
+        </ul>
 
         {/* ガイドメッセージの出し分け：marginTop: "auto" を削除 */}
         <div style={{ padding: "20px", fontSize: "12px", color: "#95a5a6", lineHeight: "1.6" }}>
@@ -313,32 +291,12 @@ function App() {
           ) : !isStaffReady ? (
             <div style={{ color: "#f1c40f" }}>💡 次は「従業員管理」から、最初の1人を登録しましょう！</div>
           ) : null}
-          <div style={{ 
-            padding: "10px 20px", 
-            fontSize: "10px", 
-            color: "#bdc3c7", 
-            textAlign: "right",
-            fontFamily: "monospace",
-            opacity: 0.7 
-          }}>
-            {APP_NAME} ver {APP_VERSION}
-          </div>
+          <div style={S.versionText}>{APP_NAME} ver {APP_VERSION}</div>
         </div>
       </nav>
       {/* --- 右側：ヘッダー ＋ メインコンテンツ --- */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        
-        {/* 🆕 右上のヘッダーエリア */}
-        <header style={{ 
-          height: "60px", 
-          backgroundColor: "#fff", 
-          borderBottom: "1px solid #e0e0e0", 
-          display: "flex", 
-          alignItems: "center", 
-          justifyContent: "space-between", // 両端に広げる
-          padding: "0 30px",
-          flexShrink: 0
-        }}>
+      <div style={S.mainWrapper}>
+        <header style={S.header}>
           {/* 左側：パンくずリスト風の表示 */}
           <div style={{ fontSize: "16px", color: "#606266", display: "flex", alignItems: "center", gap: "8px" }}>
             {/* 現在のタブのアイコンをヘッダーにも表示 */}
@@ -375,7 +333,7 @@ function App() {
         </header>
 
         {/* 下：コンテンツ表示エリア */}
-        <main style={{ flex: 1, padding: "30px", overflowY: "auto" }}>
+        <main style={S.mainContent}>
           {activeTab === "company" && db && (
             <CompanyManager db={db} onSetupComplete={handleSetupComplete} />
           )}
@@ -419,7 +377,7 @@ function App() {
             </>
           )}
           {activeTab === "user_management" && db && (
-            <SystemSettings db={db} />
+            <SystemSettings db={db} currentUser={currentUser} />
           )}
         </main>
       </div>

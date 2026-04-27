@@ -18,6 +18,26 @@ export function useSystemSettings(db: any) {
     return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
   };
 
+  const updatePassword = async (loginId: string, newPassword: string) => {
+    try {
+      // 1. パスワードをハッシュ化（addUserと同じ処理を通す）
+      const passwordHash = await hashPassword(newPassword);
+
+      // 2. カラム名を password_hash に修正（addUserの定義に合わせる）
+      await db.execute(
+        "UPDATE users SET password_hash = ? WHERE login_id = ?",
+        [passwordHash, loginId]
+      );
+
+      alert(`${loginId} のパスワードを更新しました`);
+      return true;
+    } catch (e) {
+      console.error(e);
+      alert("パスワードの更新に失敗しました");
+      return false;
+    }
+  };
+
   // --- 1. ユーザー関連ロジック ---
   const fetchUsers = async () => {
     try {
@@ -118,6 +138,7 @@ export function useSystemSettings(db: any) {
     users,
     deleteUser,
     addUser,
+    updatePassword,
     holidaySource,
     holidayUrl,
     updateHolidaySource,

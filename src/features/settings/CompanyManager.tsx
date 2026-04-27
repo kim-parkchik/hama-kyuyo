@@ -119,6 +119,38 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
         e.currentTarget.style.boxShadow = "none";
     };
 
+    /**
+     * 法人番号（13桁）が正しい形式か検証する
+     * @param code 13桁の数字文字列
+     * @returns boolean
+     */
+    const isValidCorporateNumber = (code: string): boolean => {
+        if (!/^\d{13}$/.test(code)) return false;
+
+        const digits = code.split("").map(Number);
+        const checkDigit = digits[0];
+
+        // 2〜13桁
+        const base = digits.slice(1).reverse();
+
+        let oddSum = 0;   // 奇数桁
+        let evenSum = 0;  // 偶数桁
+
+        base.forEach((digit, index) => {
+            if ((index + 1) % 2 === 0) {
+                evenSum += digit;
+            } else {
+                oddSum += digit;
+            }
+        });
+
+        const total = evenSum * 2 + oddSum;
+        const remainder = total % 9;
+        const calculatedCheckDigit = (9 - remainder) % 10;
+
+        return checkDigit === calculatedCheckDigit;
+    };
+
     // 🆕 共通：郵便番号を整形して住所を取得する関数
     const handleZipSearch = async (
         zip: string, 
@@ -440,9 +472,20 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
 
     // 法人番号検索ロジック
     const searchCorporateNumber = async () => {
-        if (compNum.length !== 13) return alert("法人番号は13桁で入力してください");
-        
+        // 前後の空白削除（念のため）
+        const targetNum = compNum.trim();
+
+        if (targetNum.length !== 13) {
+            return alert("法人番号は13桁で入力してください。");
+        }
+
+        // バリデーション実行
+        if (!isValidCorporateNumber(targetNum)) {
+            return alert("法人番号の形式（チェックディジット）が正しくありません。入力ミスがないか再度ご確認ください。");
+        }
+
         setIsSearchingComp(true);
+
         try {
             // --- Step 1: 国税庁から名称と住所を取得 ---
             const ntaUrl = `https://www.houjin-bangou.nta.go.jp/henkorireki-johoto.html?selHouzinNo=${compNum}`;
@@ -540,11 +583,17 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                                     <div style={{ display: "flex", border: "1px solid #ddd", borderRadius: "6px", overflow: "hidden" }}>
                                         <input 
                                             value={compNum} 
-                                            onChange={e => setCompNum(e.target.value.replace(/[^\d]/g, ""))} // 数字以外を除去
+                                            onChange={e => {
+                                                // 全角数字を半角に変換し、数字以外を除去
+                                                const val = e.target.value
+                                                    .replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                                    .replace(/[^\d]/g, "");
+                                                setCompNum(val);
+                                            }}
                                             onFocus={handleFocus} 
                                             onBlur={handleBlur} 
                                             maxLength={13}
-                                            placeholder="例: 1234567890123" 
+                                            placeholder="例: 5130005004301" 
                                             style={{ ...zipInputStyle, flex: 1, border: "none" }} 
                                         />
                                         <button 
