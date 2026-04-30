@@ -2,6 +2,9 @@
  * 2026年度 給与計算用マスターデータ
  */
 
+export const MASTER_YEAR = 2026;
+export const MASTER_MONTH = 3; // 協会けんぽの料率改定は通常3月（4月納付分〜）
+
 // 1. 協会けんぽ 健康保険料率（本人負担分）
 export const KENPO_RATES: Record<string, [number, number]> = {
     "北海道": [5.05, 5.90], "青森": [5.00, 5.85], "岩手": [4.80, 5.65],

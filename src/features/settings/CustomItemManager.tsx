@@ -1,4 +1,17 @@
 import React from "react";
+import { 
+    Settings, 
+    UserRound, 
+    PlusCircle, 
+    Trash2, 
+    ChevronUp, 
+    ChevronDown, 
+    CircleDollarSign, 
+    Wallet, 
+    Pin, 
+    FileEdit, 
+    Cpu 
+} from 'lucide-react';
 import * as S from "./CustomItemManager.styles";
 import { useCustomItemManager } from "./useCustomItemManager";
 
@@ -16,11 +29,11 @@ export default function CustomItemManager({ db, staffList }: Props) {
         moveItem // ← 忘れずに受け取る
     } = useCustomItemManager(db);
 
-    const getCategoryLabel = (cat: string) => {
+    const getCategoryContent = (cat: string) => {
         switch (cat) {
-            case 'fixed': return '📌 固定';
-            case 'variable': return '📝 変動';
-            case 'formula': return '🤖 自動';
+            case 'fixed': return <><Pin size={12} /> 固定</>;
+            case 'variable': return <><FileEdit size={12} /> 変動</>;
+            case 'formula': return <><Cpu size={12} /> 自動</>;
             default: return cat;
         }
     };
@@ -33,39 +46,39 @@ export default function CustomItemManager({ db, staffList }: Props) {
                     onClick={() => setActiveTab("master")} 
                     style={activeTab === "master" ? S.activeTab : S.tab}
                 >
-                    項目マスター設定
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <Settings size={18} /> 項目マスター設定
+                    </div>
                 </button>
                 <button 
                     onClick={() => setActiveTab("assignment")} 
                     style={activeTab === "assignment" ? S.activeTab : S.tab}
                 >
-                    個人別金額設定
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <UserRound size={18} /> 個人別金額設定
+                    </div>
                 </button>
             </div>
 
-            {/* --- コンテンツエリア --- */}
             <div style={{ width: "100%" }}>
                 {activeTab === "master" ? (
-                    /* タブ1：項目マスター管理 */
-                    <div style={S.card("#3498db")}>
-                        <h3 style={S.header}>⚙️ 項目マスター設定</h3>
-                        
-                        {/* 新規追加エリア（ここは少しリッチな枠で囲む） */}
+                    <div style={S.card}>                        
+                        {/* 新規追加エリア */}
                         <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "30px", background: "#f0f7ff", padding: "20px", borderRadius: "10px", border: "1px solid #d0e3ff" }}>
                             <div style={{ display: "flex", gap: "10px" }}>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: "11px", color: "#5d87a1", fontWeight: "bold" }}>タイプ</label>
                                     <select value={newItemType} onChange={e => setNewItemType(e.target.value as any)} style={{ ...S.input, width: "100%" }}>
-                                        <option value="earning">💰 支給</option>
-                                        <option value="deduction">💸 控除</option>
+                                        <option value="earning">支給</option>
+                                        <option value="deduction">控除</option>
                                     </select>
                                 </div>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: "11px", color: "#5d87a1", fontWeight: "bold" }}>計算区分</label>
                                     <select value={newItemCategory} onChange={e => setNewItemCategory(e.target.value as any)} style={{ ...S.input, width: "100%" }}>
-                                        <option value="fixed">📌 固定（毎月同額）</option>
-                                        <option value="variable">📝 変動（毎月入力）</option>
-                                        <option value="formula">🤖 自動（数式計算）</option>
+                                        <option value="fixed">固定（毎月同額）</option>
+                                        <option value="variable">変動（毎月入力）</option>
+                                        <option value="formula">自動（数式計算）</option>
                                     </select>
                                 </div>
                             </div>
@@ -75,41 +88,42 @@ export default function CustomItemManager({ db, staffList }: Props) {
                                     placeholder="例: 役職手当、厚生年金など" 
                                     value={newItemName} 
                                     onChange={e => setNewItemName(e.target.value)}
-                                    style={{ ...S.input, width: "100%" }}
+                                    style={{ ...S.input, width: "100%", boxSizing: "border-box" }}
                                 />
                             </div>
-                            <button onClick={addMasterItem} style={{ ...S.primaryBtn, marginTop: "5px" }}>＋ この内容で項目を作成</button>
+                            <button onClick={addMasterItem} style={{ ...S.primaryBtn, marginTop: "5px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                                <PlusCircle size={18} /> この内容で項目を作成
+                            </button>
                         </div>
 
                         {/* リスト表示エリア */}
                         <div style={{ display: "flex", gap: "30px" }}>
-                            
                             {/* 左：支給カラム */}
                             <div style={{ flex: 1 }}>
-                                <h4 style={{ color: "#3498db", borderBottom: "2px solid #3498db", paddingBottom: "5px", marginBottom: "15px" }}>💰 支給項目（マスター）</h4>
+                                <h4 style={{ color: "#3498db", borderBottom: "2px solid #3498db", paddingBottom: "5px", marginBottom: "15px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                    <CircleDollarSign size={20} /> 支給項目（マスター）
+                                </h4>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                                     {earnings.map((item, index) => (
                                         <div key={item.id} style={{ ...S.itemRow(item.type), padding: "10px" }}>
                                             <div style={{ flex: 1 }}>
                                                 <div style={{ fontWeight: "bold", fontSize: "14px", color: "#333" }}>{item.name}</div>
-                                                <div style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>{getCategoryLabel(item.category)}</div>
+                                                <div style={{ fontSize: "11px", color: "#666", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                    {getCategoryContent(item.category)}
+                                                </div>
                                             </div>
-                                            
-                                            {/* 並び替え・削除アクション */}
                                             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                                                 <div style={{ display: "flex", gap: "4px" }}>
-                                                    <button 
-                                                        onClick={() => moveItem(item.id, 'up')} 
-                                                        disabled={index === 0}
-                                                        style={{ ...S.orderBtn, opacity: index === 0 ? 0.3 : 1 }}
-                                                    >▲</button>
-                                                    <button 
-                                                        onClick={() => moveItem(item.id, 'down')} 
-                                                        disabled={index === earnings.length - 1}
-                                                        style={{ ...S.orderBtn, opacity: index === earnings.length - 1 ? 0.3 : 1 }}
-                                                    >▼</button>
+                                                    <button onClick={() => moveItem(item.id, 'up')} disabled={index === 0} style={{ ...S.orderBtn, opacity: index === 0 ? 0.3 : 1 }}>
+                                                        <ChevronUp size={16} />
+                                                    </button>
+                                                    <button onClick={() => moveItem(item.id, 'down')} disabled={index === earnings.length - 1} style={{ ...S.orderBtn, opacity: index === earnings.length - 1 ? 0.3 : 1 }}>
+                                                        <ChevronDown size={16} />
+                                                    </button>
                                                 </div>
-                                                <button onClick={() => deleteMasterItem(item.id)} style={{ ...S.delBtn, color: "#e74c3c", fontSize: "18px" }}>🗑️</button>
+                                                <button onClick={() => deleteMasterItem(item.id)} style={{ ...S.delBtn, color: "#e74c3c" }}>
+                                                    <Trash2 size={18} />
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
@@ -118,43 +132,40 @@ export default function CustomItemManager({ db, staffList }: Props) {
 
                             {/* 右：控除カラム */}
                             <div style={{ flex: 1 }}>
-                                <h4 style={{ color: "#e74c3c", borderBottom: "2px solid #e74c3c", paddingBottom: "5px", marginBottom: "15px" }}>💸 控除項目（マスター）</h4>
+                                <h4 style={{ color: "#e74c3c", borderBottom: "2px solid #e74c3c", paddingBottom: "5px", marginBottom: "15px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                    <Wallet size={20} /> 控除項目（マスター）
+                                </h4>
                                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                                     {deductions.map((item, index) => (
                                         <div key={item.id} style={{ ...S.itemRow(item.type), padding: "10px" }}>
                                             <div style={{ flex: 1 }}>
                                                 <div style={{ fontWeight: "bold", fontSize: "14px", color: "#333" }}>{item.name}</div>
-                                                <div style={{ fontSize: "11px", color: "#666", marginTop: "2px" }}>{getCategoryLabel(item.category)}</div>
+                                                <div style={{ fontSize: "11px", color: "#666", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                    {getCategoryContent(item.category)}
+                                                </div>
                                             </div>
-                                            
                                             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                                                 <div style={{ display: "flex", gap: "4px" }}>
-                                                    <button 
-                                                        onClick={() => moveItem(item.id, 'up')} 
-                                                        disabled={index === 0}
-                                                        style={{ ...S.orderBtn, opacity: index === 0 ? 0.3 : 1 }}
-                                                    >▲</button>
-                                                    <button 
-                                                        onClick={() => moveItem(item.id, 'down')} 
-                                                        disabled={index === deductions.length - 1}
-                                                        style={{ ...S.orderBtn, opacity: index === deductions.length - 1 ? 0.3 : 1 }}
-                                                    >▼</button>
+                                                    <button onClick={() => moveItem(item.id, 'up')} disabled={index === 0} style={{ ...S.orderBtn, opacity: index === 0 ? 0.3 : 1 }}>
+                                                        <ChevronUp size={16} />
+                                                    </button>
+                                                    <button onClick={() => moveItem(item.id, 'down')} disabled={index === deductions.length - 1} style={{ ...S.orderBtn, opacity: index === deductions.length - 1 ? 0.3 : 1 }}>
+                                                        <ChevronDown size={16} />
+                                                    </button>
                                                 </div>
-                                                <button onClick={() => deleteMasterItem(item.id)} style={{ ...S.delBtn, color: "#e74c3c", fontSize: "18px" }}>🗑️</button>
+                                                <button onClick={() => deleteMasterItem(item.id)} style={{ ...S.delBtn, color: "#e74c3c" }}>
+                                                    <Trash2 size={18} />
+                                                </button>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             </div>
-
                         </div>
                     </div>
                 ) : (
                     /* タブ2：個人別金額設定 */
-                    <div style={S.card("#2ecc71")}>
-                        <h3 style={S.header}>👤 個人別金額設定</h3>
-
-                        {/* スタッフ選択 */}
+                    <div style={S.card}>
                         <div style={{ marginBottom: "20px" }}>
                             <label style={{ fontSize: "12px", color: "#666", marginBottom: "5px", display: "block" }}>対象スタッフ</label>
                             <select 
@@ -169,15 +180,18 @@ export default function CustomItemManager({ db, staffList }: Props) {
 
                         {selectedStaffId ? (
                             <div style={{ display: "flex", gap: "30px" }}>
-                                {/* --- 左カラム：支給 --- */}
                                 <div style={{ flex: 1 }}>
-                                    <h4 style={{ color: "#3498db", borderBottom: "2px solid #3498db", paddingBottom: "5px", marginBottom: "15px" }}>💰 支給項目</h4>
+                                    <h4 style={{ color: "#3498db", borderBottom: "2px solid #3498db", paddingBottom: "5px", marginBottom: "15px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <CircleDollarSign size={20} /> 支給項目
+                                    </h4>
                                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                                         {earnings.map(item => (
                                             <div key={item.id} style={{ ...S.itemRow(item.type), padding: "10px" }}>
                                                 <div style={{ flex: 1 }}>
                                                     <div style={{ fontWeight: "bold", fontSize: "14px" }}>{item.name}</div>
-                                                    <div style={{ fontSize: "11px", color: "#999" }}>{getCategoryLabel(item.category)}</div>
+                                                    <div style={{ fontSize: "11px", color: "#999", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                        {getCategoryContent(item.category)}
+                                                    </div>
                                                 </div>
                                                 {item.category !== 'formula' ? (
                                                     <div style={{ display: "flex", alignItems: "center", background: "#f8f9fa", padding: "4px 8px", borderRadius: "4px", border: "1px solid #ddd" }}>
@@ -191,22 +205,27 @@ export default function CustomItemManager({ db, staffList }: Props) {
                                                         />
                                                     </div>
                                                 ) : (
-                                                    <div style={{ color: "#999", fontSize: "12px", fontStyle: "italic" }}>自動算出</div>
+                                                    <div style={{ color: "#999", fontSize: "12px", fontStyle: "italic", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                        <Cpu size={14} /> 自動算出
+                                                    </div>
                                                 )}
                                             </div>
                                         ))}
                                     </div>
                                 </div>
 
-                                {/* --- 右カラム：控除 --- */}
                                 <div style={{ flex: 1 }}>
-                                    <h4 style={{ color: "#e74c3c", borderBottom: "2px solid #e74c3c", paddingBottom: "5px", marginBottom: "15px" }}>💸 控除項目</h4>
+                                    <h4 style={{ color: "#e74c3c", borderBottom: "2px solid #e74c3c", paddingBottom: "5px", marginBottom: "15px", display: "flex", alignItems: "center", gap: "8px" }}>
+                                        <Wallet size={20} /> 控除項目
+                                    </h4>
                                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                                         {deductions.map(item => (
                                             <div key={item.id} style={{ ...S.itemRow(item.type), padding: "10px" }}>
                                                 <div style={{ flex: 1 }}>
                                                     <div style={{ fontWeight: "bold", fontSize: "14px" }}>{item.name}</div>
-                                                    <div style={{ fontSize: "11px", color: "#999" }}>{getCategoryLabel(item.category)}</div>
+                                                    <div style={{ fontSize: "11px", color: "#999", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                        {getCategoryContent(item.category)}
+                                                    </div>
                                                 </div>
                                                 {item.category !== 'formula' ? (
                                                     <div style={{ display: "flex", alignItems: "center", background: "#fdf2f2", padding: "4px 8px", borderRadius: "4px", border: "1px solid #f5c6cb" }}>
@@ -220,7 +239,9 @@ export default function CustomItemManager({ db, staffList }: Props) {
                                                         />
                                                     </div>
                                                 ) : (
-                                                    <div style={{ color: "#999", fontSize: "12px", fontStyle: "italic" }}>自動算出</div>
+                                                    <div style={{ color: "#999", fontSize: "12px", fontStyle: "italic", display: "flex", alignItems: "center", gap: "4px" }}>
+                                                        <Cpu size={14} /> 自動算出
+                                                    </div>
                                                 )}
                                             </div>
                                         ))}
@@ -229,6 +250,8 @@ export default function CustomItemManager({ db, staffList }: Props) {
                             </div>
                         ) : (
                             <div style={{ textAlign: "center", padding: "40px", color: "#999", backgroundColor: "#f8f9fa", borderRadius: "8px", border: "2px dashed #eee" }}>
+                                <UserRound size={32} style={{ marginBottom: "10px", opacity: 0.5 }} />
+                                <br />
                                 スタッフを選択すると、金額の設定ができます
                             </div>
                         )}

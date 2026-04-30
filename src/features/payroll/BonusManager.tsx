@@ -12,6 +12,7 @@ import React, { useState, useEffect, useMemo } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { Gift, ClipboardList, Calculator } from 'lucide-react';
 import * as Master from '../../constants/salaryMaster2026';
 import { applyRounding } from '../../utils/payrollUtils';
 
@@ -360,17 +361,24 @@ export default function BonusManager({ db, staffList }: Props) {
 
     // ── レンダリング ────────────────────────────────────────────
     return (
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
 
             {/* ── タブナビゲーション ── */}
-            <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "2px solid #eee" }}>
-                {([['list', '① 賞与設定'], ['items', '② 支給・控除項目'], ['calc', '③ 社員別金額・計算']] as const).map(([key, label]) => (
+            <div style={{ display: "flex", gap: 4, marginBottom: 25, borderBottom: "2px solid #eee" }}>
+                {([
+                    ['list', '賞与設定', <Gift size={18} />],
+                    ['items', '支給・控除項目', <ClipboardList size={18} />],
+                    ['calc', '社員別金額・計算', <Calculator size={18} />]
+                ] as const).map(([key, label, icon]) => (
                     <button key={key} onClick={() => setActiveTab(key)}
-                        style={{ padding: "10px 20px", border: "none", cursor: "pointer", fontWeight: "bold", fontSize: 13,
+                        style={{ padding: "12px 24px", border: "none", cursor: "pointer", fontWeight: "bold", fontSize: 15,
                             borderBottom: activeTab === key ? "3px solid #3498db" : "3px solid transparent",
                             color: activeTab === key ? "#3498db" : "#7f8c8d",
                             backgroundColor: "transparent" }}>
-                        {label}
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            {icon}
+                            {label}
+                        </div>
                     </button>
                 ))}
             </div>

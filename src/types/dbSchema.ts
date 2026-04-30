@@ -88,6 +88,7 @@ export const DB_SCHEMAS = [
     retirement_date TEXT, 
     is_executive INTEGER DEFAULT 0,
     payroll_group_id INTEGER DEFAULT 1,
+    social_insurance_group_id INTEGER DEFAULT 1, -- 🆕 追加：社保規定グループとの紐付け
     calendar_pattern_id INTEGER DEFAULT 1,
     work_days TEXT,
     scheduled_in TEXT DEFAULT '',
@@ -106,12 +107,13 @@ export const DB_SCHEMAS = [
     resident_tax INTEGER DEFAULT 0,
     standard_remuneration INTEGER DEFAULT 0,
     is_employment_ins_eligible INTEGER DEFAULT 1,
-    health_ins_id TEXT,
-    pension_num TEXT,
-    employment_ins_num TEXT,
+    health_ins_num TEXT,      -- 健康保険被保険者番号
+    pension_num TEXT,         -- 厚生年金整理番号
+    employment_ins_num TEXT,  -- 雇用保険被保険者番号
     my_number TEXT,
     FOREIGN KEY (calendar_pattern_id) REFERENCES calendar_patterns(id),
-    FOREIGN KEY (payroll_group_id) REFERENCES payroll_groups(id)
+    FOREIGN KEY (payroll_group_id) REFERENCES payroll_groups(id),
+    FOREIGN KEY (social_insurance_group_id) REFERENCES social_insurance_groups(id)
   );`,
 
   // 7. 勤怠データ
@@ -264,6 +266,20 @@ export const DB_SCHEMAS = [
     name TEXT NOT NULL,
     closing_day INTEGER NOT NULL,   -- 1~28 または 99(末日)
     is_next_month INTEGER NOT NULL, -- 0:当月払い, 1:翌月払い
-    payment_day INTEGER NOT NULL    -- 1~31
+    payment_day INTEGER NOT NULL,    -- 1~31
+    is_active INTEGER DEFAULT 1      -- 🆕 1:有効, 0:廃止
+  );`,
+
+  // 18. 社会保険規定グループ（健保・年金の料率管理）
+  `CREATE TABLE IF NOT EXISTS social_insurance_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT DEFAULT 'kyokai',      -- 'kyokai', 'union', 'kokuho'
+    is_fixed INTEGER DEFAULT 0,      -- 0:料率(標準報酬), 1:定額
+    health_rate REAL DEFAULT 0.0,    -- 健康保険率（kyokai時は無視）
+    care_rate REAL DEFAULT 0.0,      -- 介護保険率（kyokai時は無視）
+    pension_rate REAL DEFAULT 18.3,  -- 厚生年金率（一律だが組合により変動の余地）
+    fixed_amount INTEGER DEFAULT 0,   -- 定額時の金額
+    is_active INTEGER DEFAULT 1      -- 🆕 1:有効, 0:廃止
   );`
 ];

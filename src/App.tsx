@@ -108,59 +108,52 @@ function App() {
           <span>{isSetupComplete ? companyName : "初期設定が必要です"}</span>
         </div>
         <ul style={S.menuList}>
-          {/* 共通のリストアイテム描画関数（DRYに書くなら） */}
+          {/* 「会社設定」だけは常に表示（セットアップの起点なので） */}
           <li onClick={() => setActiveTab("company")} style={S.getTabStyle(activeTab === "company")}>
-             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                {TAB_ICONS.company}
-                <span>{TAB_NAMES.company}</span>
-             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              {TAB_ICONS.company}
+              <span>{TAB_NAMES.company}</span>
+            </div>
           </li>
-          {isSetupComplete && (
-            <>
-              {/* 各メニューを Lucide アイコンに置き換え */}
-              <li onClick={() => setActiveTab("calendar")} style={S.getTabStyle(activeTab === "calendar")}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  {TAB_ICONS.calendar}
-                  <span>{TAB_NAMES.calendar}</span>
-                </div>
-              </li>
-              <li onClick={() => setActiveTab("staff")} style={S.getTabStyle(activeTab === "staff")}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  {TAB_ICONS.staff}
-                  <span>{TAB_NAMES.staff}</span>
-                </div>
-              </li>
 
-              {/* 無効化（isStaffReady判定）が必要なメニュー */}
-              {[
-                { id: "paid_leave", key: "paid_leave" },
-                { id: "custom_items", key: "custom_items" },
-                { id: "attendance", key: "attendance" },
-                { id: "bonus", key: "bonus" },
-                { id: "payslip", key: "payslip" },
-              ].map(item => (
-                <li 
-                  key={item.id}
-                  onClick={() => isStaffReady && setActiveTab(item.id)} 
-                  style={S.getTabStyle(activeTab === item.id, !isStaffReady)}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                    {TAB_ICONS[item.key]}
-                    <span>{TAB_NAMES[item.key]}</span>
-                  </div>
-                </li>
-              ))}
-            </>
-          )}
+          {/* 残りのメニューを条件付きで一括描画 */}
+          {isSetupComplete && [
+            "calendar", 
+            "staff", 
+            "paid_leave", 
+            "custom_items", 
+            "attendance", 
+            "bonus", 
+            "payslip"
+          ].map((tabKey) => {
+            // 💡 スタッフ登録が必要なタブかどうかを判定
+            const needsStaff = ["paid_leave", "custom_items", "attendance", "bonus", "payslip"].includes(tabKey);
+            const isDisabled = needsStaff && !isStaffReady;
+
+            return (
+              <li 
+                key={tabKey}
+                onClick={() => !isDisabled && setActiveTab(tabKey)} 
+                style={S.getTabStyle(activeTab === tabKey, isDisabled)}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  {TAB_ICONS[tabKey]}
+                  <span>{TAB_NAMES[tabKey]}</span>
+                </div>
+              </li>
+            );
+          })}
         </ul>
         
-        {/* ガイドメッセージの出し分け */}
-        {/* --- 修正箇所 --- */}
+        {/* 余白を埋めてシステム設定を下寄せにする */}
         <div style={{ flex: 1 }}></div>
 
-        {/* 🆕 システム設定メニュー（adminなら常時、staffなら常時表示） */}
-        <ul style={{ listStyle: "none", padding: "10px", margin: 0, borderTop: "1px solid #34495e" }}>
-          <li onClick={() => setActiveTab("user_management")} style={S.getTabStyle(activeTab === "user_management")}>
+        {/* 🆕 システム設定メニュー（書き方を統一） */}
+        <ul style={S.systemMenuArea}>
+          <li 
+            onClick={() => setActiveTab("user_management")} 
+            style={S.getTabStyle(activeTab === "user_management")}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               {TAB_ICONS.user_management}
               <span>{TAB_NAMES.user_management}</span>

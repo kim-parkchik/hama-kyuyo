@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
+import { UserCheck, Shield, Timer, XCircle, Car, TrainFront, Clock, Calendar, Banknote } from 'lucide-react';
 import { modernIconBtnStyle } from "../../styles/styles";
 import { fetchAddressByZip } from "../../utils/addressUtils";
 import * as Master from '../../constants/salaryMaster2026';
@@ -52,8 +53,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
     const [sortKey, setSortKey] = useState<"id" | "branch_id">("id");
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
     const [searchKeyword, setSearchKeyword] = useState("");
-    const [filterStatus, setFilterStatus] = useState<string[]>(["active", "on_leave"]);
-    const [filterBranchId, setFilterBranchId] = useState<string>("all");
+    const [filterStatus, setFilterStatus] = useState(["active", "on_leave", "retired"]);
 
     // =========================================================
     // 2. 従業員 基本情報 (targetXxx)
@@ -120,6 +120,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
     // 5. 外部データ・計算用マスタ
     // =========================================================
     const [branches, setBranches] = useState<any[]>([]);
+    const [branchFilters, setBranchFilters] = useState<string[]>(branches.map(b => b.name));
     const [calendarPatterns, setCalendarPatterns] = useState<CalendarPattern[]>([]);
     const [annualWorkDays, setAnnualWorkDays] = useState(245); // 計算結果（統計用）
     
@@ -153,28 +154,22 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
     };
 
     // --- 年間稼働日数を計算する関数 (patternIdを引数に取る) ---
-    const calculateDays = async (patternId: number) => {
+    const calculateDays = async (patternId: number, currentWorkDays: Record<string, boolean>) => {
         if (!db) return;
-        
-        // 常に「現在」または「計算対象」の年を取得（うるう年判定のため）
         const year = new Date().getFullYear(); 
 
-        // --- A. カレンダー設定がない（チェックなし）場合 ---
         if (patternId === 0) {
             let workDays = 0;
-            const date = new Date(year, 0, 1); // 1月1日からスタート
-
-            // 1年分ループ（年が変わるまで）
+            const date = new Date(year, 0, 1);
             while (date.getFullYear() === year) {
-                // JSの getDay() は 0:日, 1:月, 2:火, 3:水, 4:木, 5:金, 6:土
                 const dayLabels = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
                 const dayKey = dayLabels[date.getDay()];
 
-                // targetWorkDays の boolean値を確認
-                if (targetWorkDays[dayKey as keyof typeof targetWorkDays]) {
+                // ⚠️ ここ！ 外の targetWorkDays ではなく引数の currentWorkDays を使う
+                if (currentWorkDays[dayKey as keyof typeof currentWorkDays]) {
                     workDays++;
                 }
-                date.setDate(date.getDate() + 1); // 翌日へ
+                date.setDate(date.getDate() + 1);
             }
             setAnnualWorkDays(workDays);
             return;
@@ -230,7 +225,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
             setCalendarPatterns(patterns);
 
             if (!editingId) {
-                await calculateDays(targetPatternId);
+                await calculateDays(targetPatternId, targetWorkDays);
             }
         };
         init();
@@ -238,8 +233,8 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
 
     // パターンが変更されたら日数を再計算
     useEffect(() => {
-        calculateDays(targetPatternId);
-    }, [targetPatternId, targetWorkDays]);
+        calculateDays(targetPatternId, targetWorkDays);
+    }, [targetPatternId, targetWorkDays, db]); // dbも依存配列に入れておくと安全です
 
     // 絞り込みと言語検索を適用
     const filteredList = staffList.filter(s => {
@@ -253,8 +248,9 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
             s.name.toLowerCase().includes(keyword) ||
             (s.furigana || "").toLowerCase().includes(keyword);
 
-        // 🆕 3. 店舗絞り込み (ここが抜けていました！)
-        const matchesBranch = filterBranchId === "all" || String(s.branch_id) === filterBranchId;
+        // 🆕 3. 店舗絞り込み（ここを修正！）
+        // staffList の branch_name が、選択中の配列 branchFilters に含まれているかチェック
+        const matchesBranch = branchFilters.includes(s.branch_name);
 
         return matchesStatus && matchesKeyword && matchesBranch;
     });
@@ -482,10 +478,13 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
 
     // 1. 店舗リストを取得する関数（共通化）
     const fetchBranches = async () => {
-        if (!db) return []; // 結果を返せるように少し修正
+        if (!db) return;
         const res = await db.select<any[]>("SELECT * FROM branches ORDER BY id ASC");
         setBranches(res);
-        return res; // useEffect側で使うために結果を返す
+        
+        // 直接 res (取得した最新データ) から名前の配列を作ってセットする
+        const allNames = res.map(b => b.name);
+        setBranchFilters(allNames); 
     };
 
     // --- 計算用の変数（レンダリング時に算出） ---
@@ -502,7 +501,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
     const isFormVisible = isFirstRun || showForm;
     
     return (
-        <div style={{ maxWidth: "1000px", margin: "0 auto" }}>
+        <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
             <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: "20px" }}>
                 {/* 💡 最初の1人が登録済みの場合のみ、開閉ボタンを表示する */}
                 {!isFirstRun && (
@@ -661,32 +660,34 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                                     {/* --- 🆕 3大フラグ・スイッチ群 --- */}
                                     <div style={{ gridColumn: "span 2", display: "flex", gap: "15px", backgroundColor: "#f8fafc", padding: "10px", borderRadius: "5px", border: "1px solid #e2e8f0" }}>
-                                        <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer" }}>
+                                        <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer", gap: "6px" }}>
                                             <input 
                                                 type="checkbox" 
                                                 checked={targetIsExecutive === 1} 
                                                 onChange={e => setTargetIsExecutive(e.target.checked ? 1 : 0)}
-                                                style={{ marginRight: "5px" }}
                                             />
-                                            👔 役員
+                                            <UserCheck size={14} color="#64748b" />
+                                            役員
                                         </label>
-                                        <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer" }}>
+
+                                        <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer", gap: "6px" }}>
                                             <input 
                                                 type="checkbox" 
                                                 checked={targetIsEmploymentInsEligible === 1} 
                                                 onChange={e => setTargetIsEmploymentInsEligible(e.target.checked ? 1 : 0)}
-                                                style={{ marginRight: "5px" }}
                                             />
-                                            🔰 雇用保険加入
+                                            <Shield size={14} color="#64748b" />
+                                            雇用保険加入
                                         </label>
-                                        <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer" }}>
+
+                                        <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer", gap: "6px" }}>
                                             <input 
                                                 type="checkbox" 
                                                 checked={targetIsOvertimeEligible === 1} 
                                                 onChange={e => setTargetIsOvertimeEligible(e.target.checked ? 1 : 0)}
-                                                style={{ marginRight: "5px" }}
                                             />
-                                            ⏱️ 残業代対象
+                                            <Timer size={14} color="#64748b" />
+                                            残業代対象
                                         </label>
                                     </div>
                                     {/* 🆕 扶養人数（1fr） */}
@@ -780,51 +781,58 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                             
                             {/* 交通費設定セクション */}
                             <div style={{ display: "flex", gap: "10px", width: "100%", marginTop: "10px" }}>
-                                <div style={{ flex: 1 }}>
-                                    <label style={labelStyle}>交通費区分</label>
+                                <div style={{ flex: 2 }}>
+                                    <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "6px" }}>
+                                        {/* 選択されている値に応じてアイコンを切り替える */}
+                                        {targetCommuteType === "none" && <XCircle size={14} color="#94a3b8" />}
+                                        {targetCommuteType === "daily" && <Car size={14} color="#3498db" />}
+                                        {targetCommuteType === "monthly" && <TrainFront size={14} color="#27ae60" />}
+                                        交通費区分
+                                    </label>
                                     <select 
                                         value={targetCommuteType} 
-                                        onChange={e => {
-                                            setTargetCommuteType(e.target.value);
-                                            // 「支給なし」に切り替えたときに、もし単価が残っていたら0にリセットしたい場合はここに追加
-                                            // if (e.target.value === "none") setTargetCommuteAmount(0);
-                                        }} 
+                                        onChange={e => setTargetCommuteType(e.target.value)} 
                                         style={{ 
                                             ...inputStyle, 
                                             height: "38px",
-                                            // 支給なしの時はセレクトボックス自体も少し落ち着いた色にするなら
-                                            backgroundColor: targetCommuteType === "none" ? "#f1f5f9" : "#fff"
+                                            backgroundColor: targetCommuteType === "none" ? "#f8fafc" : "#fff"
                                         }}
                                     >
-                                        <option value="none">🚶‍♀️ 支給なし</option>
-                                        <option value="daily">🚗 日額支給</option>
-                                        <option value="monthly">🎫 月額固定</option>
+                                        <option value="none">支給なし</option>
+                                        <option value="daily">日額支給 (車・バイク等)</option>
+                                        <option value="monthly">月額固定 (定期代等)</option>
                                     </select>
                                 </div>
 
-                                <div style={{ flex: 2 }}>
+                                <div style={{ flex: 3 }}>
                                     <label style={{ 
                                         ...labelStyle, 
-                                        color: targetCommuteType === "none" ? "#94a3b8" : "#2c3e50" // ラベルも少し薄く
+                                        display: "flex",           // アイコン並列用
+                                        alignItems: "center",      // アイコン垂直中央
+                                        gap: "6px",                // アイコンとの間隔
+                                        color: targetCommuteType === "none" ? "#94a3b8" : "#2c3e50" 
                                     }}>
+                                        <Banknote 
+                                            size={14} 
+                                            color={targetCommuteType === "none" ? "#cbd5e1" : "#64748b"} 
+                                        />
                                         交通費単価
                                     </label>
                                     <div style={{ 
                                         position: "relative", 
                                         display: "flex", 
                                         alignItems: "center",
-                                        opacity: targetCommuteType === "none" ? 0.6 : 1 // 全体を少し透過させてグレーアウト感を出す
+                                        opacity: targetCommuteType === "none" ? 0.6 : 1 
                                     }}>
                                         <input 
                                             type="number" 
                                             value={targetCommuteAmount} 
                                             onChange={e => setTargetCommuteAmount(Number(e.target.value))}
-                                            disabled={targetCommuteType === "none"} // ✨ ここで入力をブロック
+                                            disabled={targetCommuteType === "none"} 
                                             style={{ 
                                                 ...inputStyle, 
                                                 paddingRight: "60px",
                                                 textAlign: "right",
-                                                // ✨ disabled時の背景色を指定
                                                 backgroundColor: targetCommuteType === "none" ? "#f1f5f9" : "#fff",
                                                 cursor: targetCommuteType === "none" ? "not-allowed" : "auto"
                                             }} 
@@ -833,39 +841,50 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                                             position: "absolute", 
                                             right: "12px", 
                                             fontSize: "12px", 
-                                            color: targetCommuteType === "none" ? "#cbd5e1" : "#7f8c8d" // 支給なし時はもっと薄く
+                                            color: targetCommuteType === "none" ? "#cbd5e1" : "#7f8c8d",
+                                            pointerEvents: "none" // 単位をクリックしてもinputが反応するように
                                         }}>
                                             {targetCommuteType === "daily" ? "円 / 日" : 
-                                            targetCommuteType === "monthly" ? "円 / 月" : "未設定"}
+                                            targetCommuteType === "monthly" ? "円 / 月" : "―"}
                                         </span>
                                     </div>
                                 </div>
                             </div>
 
-                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                                <div style={{ flex: 1, minWidth: "120px" }}>
-                                    <label style={labelStyle}>給与区分</label>
-                                    <select value={targetWageType} onChange={e => setTargetWageType(e.target.value)} style={{ ...inputStyle, height: "38px" }}>
-                                        <option value="hourly">⏱️ 時給制</option>
-                                        <option value="monthly">📅 月給制</option>
-                                    </select>
-                                </div>
-                                <div style={{ flex: 2, minWidth: "200px" }}>
-                                    <label style={labelStyle}>{targetWageType === "hourly" ? "基本時給" : "基本月給"}</label>
-                                    <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                                        <input 
-                                            type="number" 
-                                            value={targetWage} 
-                                            onChange={e => setTargetWage(Number(e.target.value))} 
-                                            style={{ 
-                                                ...inputStyle, 
-                                                textAlign: "right",    // ← これを追加（右寄せ）
-                                                paddingRight: "60px"   // ← 単位との被り防止に少し広げました
-                                            }} 
-                                        />
-                                        <span style={{ position: "absolute", right: "12px", fontSize: "12px", color: "#7f8c8d" }}>
-                                            {targetWageType === "hourly" ? "円 / 時" : "円 / 月"}
-                                        </span>
+                            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", width: "100%" }}>
+                                <div style={{ display: "flex", gap: "15px", alignItems: "flex-start", width: "100%" }}>
+                                    <div style={{ flex: 2, minWidth: "120px" }}>
+                                        <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "6px" }}>
+                                            {targetWageType === "hourly" ? <Clock size={14} color="#3498db" /> : <Calendar size={14} color="#27ae60" />}
+                                            給与区分
+                                        </label>
+                                        <select value={targetWageType} onChange={e => setTargetWageType(e.target.value)} style={{ ...inputStyle, height: "38px" }}>
+                                            <option value="hourly">時給制</option>
+                                            <option value="monthly">月給制</option>
+                                        </select>
+                                    </div>
+
+                                    <div style={{ flex: 3, minWidth: "200px" }}>
+                                        <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: "6px" }}>
+                                            <Banknote size={14} color="#64748b" />
+                                            {targetWageType === "hourly" ? "基本時給" : "基本月給"}
+                                        </label>
+                                        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                                            <input 
+                                                type="number" 
+                                                value={targetWage} 
+                                                onChange={e => setTargetWage(Number(e.target.value))} 
+                                                style={{ 
+                                                    ...inputStyle, 
+                                                    textAlign: "right",
+                                                    paddingRight: "60px",
+                                                    width: "100%"
+                                                }} 
+                                            />
+                                            <span style={{ position: "absolute", right: "12px", fontSize: "12px", color: "#7f8c8d", pointerEvents: "none" }}>
+                                                {targetWageType === "hourly" ? "円 / 時" : "円 / 月"}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1252,78 +1271,143 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
 
             {/* 💡 スタッフがいて、かつフォームを閉じてる時だけリストを表示 */}
             {!isFirstRun && !showForm && (
-                <div style={{ 
-                    display: "flex", 
-                    gap: "15px", 
-                    marginBottom: "15px", 
-                    alignItems: "center",
-                    backgroundColor: "#f8fafc",
-                    padding: "15px",
-                    borderRadius: "8px",
-                    border: "1px solid #e2e8f0"
-                }}>
-                    {/* キーワード検索 */}
-                    <div style={{ flex: 2 }}>
-                        <input 
-                            placeholder="🔍 ID、名前、フリガナで検索..." 
-                            value={searchKeyword}
-                            onChange={e => setSearchKeyword(e.target.value)}
-                            style={{ ...inputStyle, margin: 0 }}
-                        />
-                    </div>
-
-                    {/* 🆕 店舗絞り込みセレクトボックス */}
-                    <div style={{ flex: 1 }}>
-                        <select 
-                            value={filterBranchId} 
-                            onChange={e => setFilterBranchId(e.target.value)}
-                            style={{ ...inputStyle, margin: 0, fontSize: "14px" }}
-                        >
-                            <option value="all">🏢 すべての店舗</option>
-                            {branches.map(b => (
-                                <option key={b.id} value={String(b.id)}>{b.name}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    {/* ステータス絞り込みボタン */}
-                    <div style={{ display: "flex", gap: "8px" }}>
-                        {[
-                            { label: "在籍", value: "active", color: "#2ecc71" },
-                            { label: "休職", value: "on_leave", color: "#f1c40f" },
-                            { label: "退職", value: "retired", color: "#e74c3c" }
-                        ].map(opt => {
-                            const isActive = filterStatus.includes(opt.value);
-                            return (
-                                <button
-                                    key={opt.value}
-                                    onClick={() => setFilterStatus(prev => 
-                                        prev.includes(opt.value) ? prev.filter(v => v !== opt.value) : [...prev, opt.value]
-                                    )}
-                                    style={{
-                                        padding: "5px 12px",
-                                        borderRadius: "15px",
-                                        border: `1px solid ${opt.color}`,
-                                        backgroundColor: isActive ? opt.color : "white",
-                                        color: isActive ? "white" : opt.color,
-                                        cursor: "pointer",
-                                        fontSize: "12px",
-                                        fontWeight: "bold",
-                                        transition: "0.2s"
-                                    }}
-                                >
-                                    {opt.label}
-                                </button>
-                            );
-                        })}
+                <section style={{ marginBottom: "20px" }}>
+                    {/* 1. 上段：支店選択 */}
+                    <div style={{ 
+                        backgroundColor: "white", 
+                        padding: "12px 20px", 
+                        borderRadius: "10px 10px 0 0", 
+                        border: "1px solid #e2e8f0",
+                        borderBottom: "none", 
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "15px",
+                        flexWrap: "wrap"
+                    }}>
+                        <span style={{ fontSize: "12px", fontWeight: "bold", color: "#64748b" }}>対象支店:</span>
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                            {branches.map(b => {
+                                // 現在の支店名が、選択中配列に含まれているか
+                                const isActive = branchFilters.includes(b.name);
+                                
+                                return (
+                                    <button
+                                        key={b.id}
+                                        onClick={() => {
+                                            setBranchFilters(prev => 
+                                                prev.includes(b.name) 
+                                                    ? prev.filter(v => v !== b.name) // あれば消す
+                                                    : [...prev, b.name]             // なければ足す
+                                            );
+                                        }}
+                                        // 有給管理で定義した getFilterButtonStyle と同じロジックを適用
+                                        style={{
+                                            padding: "4px 14px",
+                                            borderRadius: "15px",
+                                            borderWidth: "1px",
+                                            borderStyle: "solid",
+                                            borderColor: "#0055A4",
+                                            backgroundColor: isActive ? "#0055A4" : "white",
+                                            color: isActive ? "white" : "#0055A4",
+                                            cursor: "pointer",
+                                            fontSize: "11px",
+                                            fontWeight: "bold",
+                                            transition: "0.2s"
+                                        }}
+                                    >
+                                        {b.name}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        
+                        {/* リセットボタンの処理 */}
                         <button 
-                            onClick={() => setFilterStatus(["active", "on_leave", "retired"])}
-                            style={{ fontSize: "12px", border: "none", background: "none", color: "#3498db", cursor: "pointer", textDecoration: "underline" }}
+                            onClick={() => {
+                                setBranchFilters(branches.map(b => b.name)); // 全支店を選択状態に
+                                setFilterStatus(["active", "on_leave", "retired"]);
+                                setSearchKeyword("");
+                            }}
+                            style={{ 
+                                marginLeft: "auto", 
+                                fontSize: "11px", 
+                                border: "none", 
+                                background: "none", 
+                                color: "#94a3b8", 
+                                cursor: "pointer", 
+                                textDecoration: "underline" 
+                            }}
                         >
-                            すべて表示
+                            条件をリセット
                         </button>
                     </div>
-                </div>
+
+                    {/* 2. 下段：キーワード検索 ＆ 状態フィルタ */}
+                    <div style={{ 
+                        backgroundColor: "#f1f5f9",
+                        padding: "10px 20px", 
+                        borderRadius: "0 0 10px 10px", 
+                        border: "1px solid #e2e8f0",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "30px", // 有給管理(40px)より少し詰めて検索幅を確保
+                        height: "56px", 
+                        boxSizing: "border-box"
+                    }}>
+                        {/* 左側：キーワード検索（ここを幅広く持たせる） */}
+                        <div style={{ flex: "1" }}> {/* flex: 1 にして可能な限り広げる */}
+                            <input 
+                                placeholder="🔍 ID、名前、フリガナ、役割などで検索..." 
+                                value={searchKeyword}
+                                onChange={e => setSearchKeyword(e.target.value)}
+                                style={{ 
+                                    width: "100%",
+                                    fontSize: "14px",
+                                    padding: "0 12px",
+                                    height: "36px", 
+                                    borderRadius: "6px",
+                                    border: "1px solid #cbd5e1",
+                                    boxSizing: "border-box",
+                                    backgroundColor: "white"
+                                }}
+                            />
+                        </div>
+
+                        {/* 右側：状態フィルタ */}
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: "12px", fontWeight: "bold", color: "#64748b" }}>状態:</span>
+                            {[
+                                { label: "在籍", value: "active", color: "#2ecc71" },
+                                { label: "休職", value: "on_leave", color: "#f1c40f" },
+                                { label: "退職", value: "retired", color: "#e74c3c" }
+                            ].map(opt => {
+                                const isActive = filterStatus.includes(opt.value);
+                                return (
+                                    <button
+                                        key={opt.value}
+                                        onClick={() => setFilterStatus(prev => 
+                                            prev.includes(opt.value) ? prev.filter(v => v !== opt.value) : [...prev, opt.value]
+                                        )}
+                                        style={{
+                                            padding: "4px 14px",
+                                            borderRadius: "15px",
+                                            border: `1px solid ${opt.color}`,
+                                            backgroundColor: isActive ? opt.color : "white",
+                                            color: isActive ? "white" : opt.color,
+                                            cursor: "pointer",
+                                            fontSize: "11px",
+                                            fontWeight: "bold",
+                                            height: "28px",
+                                            lineHeight: "1"
+                                        }}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </section>
             )}
             {!isFirstRun && !showForm && (
             <section style={cardStyle}>

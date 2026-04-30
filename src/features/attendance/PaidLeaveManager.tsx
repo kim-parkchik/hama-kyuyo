@@ -10,19 +10,38 @@ interface Props {
 const PaidLeaveManager: React.FC<Props> = ({ db, staffList }) => {
     const [selectedStaffId, setSelectedStaffId] = useState("");
     const [activeFilters, setActiveFilters] = useState<string[]>(["active"]);
+
+    // 🆕 Stateに変更：マスタ上の全店舗名
+    const [allBranchNames, setAllBranchNames] = useState<string[]>([]);
+    // 支店フィルタの状態
+    const [branchFilters, setBranchFilters] = useState<string[]>([]);
+
+    // 🆕 データベースから「全店舗名」を直接取得する
+    useEffect(() => {
+        const fetchBranches = async () => {
+            try {
+                const res = await db.select<any[]>("SELECT name FROM branches ORDER BY id ASC");
+                const names = res.map(b => b.name);
+                setAllBranchNames(names);
+                // 初回のみ、全ての支店を選択状態にする
+                setBranchFilters(names);
+            } catch (error) {
+                console.error("支店リストの取得に失敗:", error);
+            }
+        };
+        fetchBranches();
+    }, [db]); // dbが変わった時（初回）のみ実行
+
     const [grants, setGrants] = useState<any[]>([]);
 
-    // ✨ 今日の日付を初期値にする (YYYY-MM-DD形式)
+    // 日付・フォーム関連のState
     const today = new Date().toISOString().split('T')[0];
     const [grantDate, setGrantDate] = useState(today);
     const [days, setDays] = useState(10);
-    
     const [usageDate, setUsageDate] = useState(today);
-    const [usageDays, setUsageDays] = useState(1.0); // 1.0 または 0.5
-
+    const [usageDays, setUsageDays] = useState(1.0);
     const [leaveName, setLeaveName] = useState("法定有給");
     const [expiryDate, setExpiryDate] = useState("");
-
     const [usageHistory, setUsageHistory] = useState<any[]>([]);
 
     // 選択した社員の付与データを読み込む
@@ -44,8 +63,6 @@ const PaidLeaveManager: React.FC<Props> = ({ db, staffList }) => {
             setExpiryDate(d.toISOString().split('T')[0]);
         }
     }, [grantDate]);
-
-
 
     // 履歴を読み込む関数
     const loadUsageHistory = async (staffId: string) => {
@@ -142,130 +159,177 @@ const PaidLeaveManager: React.FC<Props> = ({ db, staffList }) => {
         }
     };
 
-    // ✨ フィルタリングされた従業員リストを作成
-    const filteredStaffList = staffList.filter(s => activeFilters.includes(s.status));
+    // ✨ フィルタリングロジック
+    const filteredStaffList = staffList.filter(s => {
+        const matchesStatus = activeFilters.includes(s.status);
+        const matchesBranch = branchFilters.includes(s.branch_name);
+        return matchesStatus && matchesBranch;
+    });
 
-    // ✨ フィルタ変更によって選択中の人がリストから消えたら、選択をリセットする
+    // ✨ フィルタ変更時のリセットロジック
     useEffect(() => {
         if (selectedStaffId) {
-            // 現在選んでいる人が、フィルタ後のリストにまだ存在するか確認
             const isStillVisible = filteredStaffList.some(s => String(s.id) === String(selectedStaffId));
-            
-            if (!isStillVisible) {
-                setSelectedStaffId(""); // リストから消えたら選択を解除
-            }
+            if (!isStillVisible) setSelectedStaffId("");
         }
-    }, [filteredStaffList]); // フィルタ結果が変わるたびにチェック
+    }, [activeFilters, branchFilters, filteredStaffList]); // filteredStaffList 自体も監視対象へ
 
     return (
-        <div style={{ padding: "20px", background: "#f8fafc", borderRadius: "8px", minHeight: "100vh" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+        {/* <div style={{ padding: "20px", background: "#f8fafc", borderRadius: "8px", minHeight: "100vh" }}> */}
             
-            {/* 🆕 従業員選択・フィルタセクション（モダンな横並びカード） */}
-            {/* 🆕 従業員選択・フィルタセクション（AttendanceManager.tsx のスタイルを継承） */}
-            <section style={{ 
-                display: "flex", 
-                justifyContent: "space-between", 
-                alignItems: "stretch", 
-                gap: "20px", 
-                marginBottom: "10px" 
-            }}>
+            <section style={{ marginBottom: "20px" }}>
+                {/* 1. 上段：支店選択（グループ分けの役割） */}
                 <div style={{ 
-                    backgroundColor: "white",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "10px",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
-                    width: "780px", // 固定幅
-                    flex: "none",
-                    padding: "12px 20px"
+                    backgroundColor: "white", 
+                    padding: "12px 20px", 
+                    borderRadius: "10px 10px 0 0", // 下側は繋げる
+                    borderWidth: "1px",
+                    borderStyle: "solid",
+                    borderColor: "#e2e8f0",
+                    borderBottom: "none", // 下の段と合体させる
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "15px",
+                    flexWrap: "wrap"
                 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        {/* 左側：セレクトボックス */}
-                        <div style={{ width: "500px" }}> 
-                            <select 
-                                value={selectedStaffId} 
-                                onChange={e => setSelectedStaffId(e.target.value)} 
-                                style={{ 
-                                    width: "100%",
-                                    fontSize: "14px",
-                                    padding: "4px 10px",
-                                    height: "32px",
-                                    borderRadius: "6px",
-                                    border: "1px solid #cbd5e1",
-                                    cursor: "pointer"
+                    <span style={filterLabelStyle}>対象支店:</span>
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        {/* 🆕 allBranchNames を使用してボタンを生成 */}
+                        {allBranchNames.map(branchName => (
+                            <button
+                                key={branchName}
+                                onClick={() => {
+                                    setBranchFilters(prev => 
+                                        prev.includes(branchName) 
+                                            ? prev.filter(v => v !== branchName) 
+                                            : [...prev, branchName]
+                                    );
                                 }}
+                                style={getFilterButtonStyle(branchFilters.includes(branchName), "#0055A4")}
                             >
-                                <option value="">-- 従業員を選択してください --</option>
-                                {filteredStaffList.map(s => (
-                                    <option key={s.id} value={s.id}>
-                                        [{s.id}] {s.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-
-                        {/* 右側：フィルタボタン群（AttendanceManager の onClick ロジックを採用） */}
-                        <div style={{ display: "flex", gap: "8px", alignItems: "center", marginLeft: "auto" }}>
-                            {[
-                                { label: "在籍", value: "active", color: "#2ecc71" },
-                                { label: "休職", value: "on_leave", color: "#f1c40f" },
-                                { label: "退職", value: "retired", color: "#e74c3c" }
-                            ].map(opt => {
-                                const isActive = activeFilters.includes(opt.value);
-                                return (
-                                    <button
-                                        key={opt.value}
-                                        // ✨ AttendanceManager と同じトグルロジック
-                                        onClick={() => {
-                                            setActiveFilters(prev => 
-                                                prev.includes(opt.value) 
-                                                    ? prev.filter(v => v !== opt.value) 
-                                                    : [...prev, opt.value]
-                                            );
-                                        }}
-                                        style={{
-                                            padding: "4px 12px",
-                                            borderRadius: "15px",
-                                            border: `1px solid ${opt.color}`,
-                                            backgroundColor: isActive ? opt.color : "white",
-                                            color: isActive ? "white" : opt.color,
-                                            cursor: "pointer",
-                                            fontSize: "11px",
-                                            fontWeight: "bold",
-                                            height: "28px",
-                                            transition: "0.2s",
-                                            whiteSpace: "nowrap"
-                                        }}
-                                    >
-                                        {opt.label}
-                                    </button>
-                                );
-                            })}
-                            <button 
-                                onClick={() => setActiveFilters(["active", "on_leave", "retired"])}
-                                style={{ 
-                                    fontSize: "11px", border: "none", background: "none", 
-                                    color: "#3498db", cursor: "pointer", textDecoration: "underline" 
-                                }}
-                            >
-                                全表示
+                                {branchName}
                             </button>
-                        </div>
+                        ))}
                     </div>
+                    
+                    <button 
+                        onClick={() => {
+                            setActiveFilters(["active"]); // 「在籍」のみに戻す
+                            setBranchFilters(allBranchNames); // 「全支店選択」に戻す
+                        }}
+                        style={{ 
+                            marginLeft: "auto", 
+                            fontSize: "11px", 
+                            border: "none", 
+                            background: "none", 
+                            color: "#94a3b8", 
+                            cursor: "pointer", 
+                            textDecoration: "underline" 
+                        }}
+                    >
+                        条件をリセット
+                    </button>
                 </div>
 
-                {/* 右側：ステータスカード（あれば便利なので残しました） */}
-                <div style={{ flex: "0 0 235px", display: "flex", alignItems: "center" }}>
-                    {selectedStaffId && (
+                {/* 2. 下段：従業員選択 ＆ 状態フィルタ ＆ 残日数表示（高さ固定） */}
+                <div style={{ 
+                    backgroundColor: "#f1f5f9",
+                    padding: "10px 20px", // パディングを少し調整
+                    borderRadius: "0 0 10px 10px", 
+                    borderWidth: "1px",
+                    borderStyle: "solid",
+                    borderColor: "#e2e8f0",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "40px",
+                    height: "52px", // ✨ 親要素の高さを固定（padding等を含めた計算値）
+                    boxSizing: "border-box"
+                }}>
+                {/* 左側：セレクトボックス（高さ32px） */}
+                <div style={{ flex: "0 1 450px" }}> 
+                    <select 
+                    value={selectedStaffId} 
+                    onChange={e => setSelectedStaffId(e.target.value)} 
+                    style={{ 
+                        width: "100%",
+                        fontSize: "14px",
+                        padding: "0 12px",
+                        height: "32px", // ✨ 明示的に高さを指定
+                        borderRadius: "6px",
+                        borderWidth: "1px",
+                        borderStyle: "solid",
+                        borderColor: "#cbd5e1",
+                        cursor: "pointer",
+                        backgroundColor: "white",
+                        lineHeight: "30px"
+                    }}
+                    >
+                    <option value="">-- 従業員を選択 ({filteredStaffList.length}名) --</option>
+                    {filteredStaffList.map(s => (
+                        <option key={s.id} value={s.id}>
+                        [{s.branch_name || "本部"}] {s.id}: {s.name}
+                        </option>
+                    ))}
+                    </select>
+                </div>
+
+                {/* 右側：状態フィルタ（高さ32px程度で安定） */}
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <span style={filterLabelStyle}>状態:</span>
+                    {[
+                    { label: "在籍", value: "active", color: "#2ecc71" },
+                    { label: "休職", value: "on_leave", color: "#f1c40f" },
+                    { label: "退職", value: "retired", color: "#e74c3c" }
+                    ].map(opt => (
+                    <button
+                        key={opt.value}
+                        onClick={() => {
+                        setActiveFilters(prev => 
+                            prev.includes(opt.value) ? prev.filter(v => v !== opt.value) : [...prev, opt.value]
+                        );
+                        }}
+                        style={{
+                        ...getFilterButtonStyle(activeFilters.includes(opt.value), opt.color),
+                        height: "28px", // ✨ ボタンの高さも固定
+                        lineHeight: "1"
+                        }}
+                    >
+                        {opt.label}
+                    </button>
+                    ))}
+                </div>
+
+                {/* ✨ 右端：残日数表示エリア（非表示時も高さを維持） */}
+                <div style={{ 
+                    marginLeft: "auto", 
+                    minWidth: "120px", // 幅も確保しておくとガタつかない
+                    display: "flex", 
+                    justifyContent: "flex-end" 
+                }}>
+                    {selectedStaffId ? (
                         <div style={{ 
-                            backgroundColor: "#34495e", color: "white", padding: "8px 15px", 
-                            borderRadius: "10px", width: "100%", textAlign: "center"
+                            backgroundColor: "#002D62", 
+                            color: "white", 
+                            padding: "4px 15px", 
+                            borderRadius: "6px",
+                            display: "flex",
+                            alignItems: "baseline",
+                            gap: "8px",
+                            height: "32px", // ✨ セレクトボックスと高さを合わせる
+                            boxSizing: "border-box"
                         }}>
-                            <span style={{ fontSize: "10px", opacity: 0.8 }}>現在の有効残日数</span>
-                            <div style={{ fontSize: "18px", fontWeight: "bold" }}>
-                                {grants.reduce((sum, g) => sum + (g.days_granted - g.days_used), 0)} 日
-                            </div>
+                            <span style={{ fontSize: "10px", opacity: 0.8 }}>残日数</span>
+                            <span style={{ fontSize: "16px", fontWeight: "bold" }}>
+                            {grants.reduce((sum, g) => sum + (g.days_granted - g.days_used), 0)}
+                            <small style={{ marginLeft: "4px", fontSize: "10px", fontWeight: "normal" }}>日</small>
+                            </span>
                         </div>
+                    ) : (
+                        /* 未選択時：見えない要素を置いて高さを保つ、または単に空にする（親がheight固定なのでこれでもOK） */
+                        <div style={{ height: "32px" }} />
                     )}
+                    </div>
                 </div>
             </section>
 
@@ -394,5 +458,29 @@ const actionBtnStyle = { width: "100%", padding: "10px", color: "white", border:
 const tableStyle = { width: "100%", borderCollapse: "collapse" as const };
 const thStyle = { padding: "12px 10px", textAlign: "left" as const, fontSize: "12px", color: "#64748b", borderBottom: "2px solid #e2e8f0" };
 const tdStyle = { padding: "12px 10px", fontSize: "14px", borderBottom: "1px solid #f1f5f9" };
+// 🆕 追加するスタイルヘルパー
+const filterLabelStyle: React.CSSProperties = {
+    fontSize: "12px",
+    fontWeight: "bold",
+    color: "#64748b",
+    minWidth: "40px"
+};
 
+const getFilterButtonStyle = (isActive: boolean, color: string): React.CSSProperties => ({
+  padding: "4px 14px",
+  borderRadius: "15px",
+  // ⚠️ border: `1px solid ${color}` を分解
+  borderWidth: "1px",
+  borderStyle: "solid",
+  borderColor: color, 
+  
+  backgroundColor: isActive ? color : "white",
+  color: isActive ? "white" : color,
+  cursor: "pointer",
+  fontSize: "11px",
+  fontWeight: "bold",
+  transition: "0.2s",
+  whiteSpace: "nowrap",
+  outline: "none" // フォーカス時の挙動も安定させる
+});
 export default PaidLeaveManager;

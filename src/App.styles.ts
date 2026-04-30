@@ -12,13 +12,15 @@ export const container: CSSProperties = {
 
 /**
  * サイドバー（ナビゲーション）
+ * 🆕 ロゴの開始色 #002D62 を採用
  */
 export const sidebar: CSSProperties = {
   width: "220px",
-  backgroundColor: "#2c3e50",
+  backgroundColor: "#002D62", 
   color: "#ecf0f1",
   display: "flex",
   flexDirection: "column",
+  boxShadow: "2px 0 10px rgba(0,0,0,0.2)",
 };
 
 /**
@@ -28,7 +30,7 @@ export const sidebarHeader: CSSProperties = {
   padding: "20px",
   fontSize: "18px",
   fontWeight: "bold",
-  borderBottom: "1px solid #34495e",
+  borderBottom: "1px solid rgba(255,255,255,0.1)", // 透過した白で上品に
   color: "#ecf0f1",
   display: "flex",
   alignItems: "center",
@@ -121,19 +123,20 @@ export const mainContent: CSSProperties = {
 export const guideBox: CSSProperties = {
   padding: "20px",
   fontSize: "12px",
-  color: "#95a5a6",
+  color: "rgba(255, 255, 255, 0.6)", // 背景が濃いので文字を透過白に
   lineHeight: "1.6",
 };
 
 /**
  * 動的なタブスタイルを取得する関数
+ * 🆕 アクティブ色をロゴの終了色 #0055A4 に合わせました
  */
 export const getTabStyle = (isActive: boolean, isDisabled: boolean = false): CSSProperties => ({
   padding: "12px 15px",
   cursor: isDisabled ? "not-allowed" : "pointer",
   borderRadius: "5px",
   marginBottom: "5px",
-  backgroundColor: isActive ? "#3498db" : "transparent",
+  backgroundColor: isActive ? "#0055A4" : "transparent",
   transition: "all 0.2s",
   opacity: isDisabled ? 0.4 : 1,
   pointerEvents: isDisabled ? "none" : "auto",
@@ -149,10 +152,9 @@ export const getTabStyle = (isActive: boolean, isDisabled: boolean = false): CSS
 export const versionText: CSSProperties = {
   padding: "10px 20px",
   fontSize: "10px",
-  color: "#bdc3c7",
+  color: "rgba(255, 255, 255, 0.4)",
   textAlign: "right",
   fontFamily: "monospace",
-  opacity: 0.7,
 };
 
 /**
@@ -192,4 +194,10 @@ export const injectDangerousStyles = () => {
     }
   `;
   document.head.appendChild(style);
+};
+
+export const systemMenuArea: CSSProperties = {
+  ...menuList,
+  borderTop: "1px solid rgba(255, 255, 255, 0.1)", // 透過させた白
+  marginTop: "10px",
 };

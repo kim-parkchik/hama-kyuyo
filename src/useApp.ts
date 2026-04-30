@@ -2,7 +2,7 @@
 import Database from "@tauri-apps/plugin-sql";
 import { useEffect, useState } from "react";
 import { DB_SCHEMAS } from "./types/dbSchema";
-import { HOLIDAY_CSV_URL_DEFAULT } from "./constants/salaryMaster2026";
+import { PENSION_RATE, HOLIDAY_CSV_URL_DEFAULT } from "./constants/salaryMaster2026";
 import * as S from "./App.styles";
 
 export const useApp = () => {
@@ -54,6 +54,14 @@ export const useApp = () => {
             `INSERT INTO payroll_groups (id, name, closing_day, is_next_month, payment_day) VALUES (1, '全社共通規定', 99, 0, 25)`
           );
         }
+        const sGroups = await sqlite.select<any[]>("SELECT * FROM social_insurance_groups WHERE id = 1");
+        if (sGroups.length === 0) {
+          await sqlite.execute(
+            `INSERT INTO social_insurance_groups (id, name, type, is_fixed, pension_rate, is_active) 
+            VALUES (1, '全国健康保険協会（協会けんぽ）', 'kyokai', 0, ?, 1)`,
+            [PENSION_RATE * 2]
+          );
+        }
         const existingHead = await sqlite.select<any[]>("SELECT * FROM branches");
         if (existingHead.length === 0) {
           await sqlite.execute("INSERT INTO branches (name, prefecture) VALUES ('本店', '')");
@@ -75,7 +83,14 @@ export const useApp = () => {
         const hasPref = branchRes.length > 0 && branchRes[0].prefecture !== "";
         setIsSetupComplete(hasName && hasPref);
 
-        const resStaff = await sqlite.select<any[]>("SELECT * FROM staff ORDER BY id ASC");
+        const resStaff = await sqlite.select<any[]>(`
+          SELECT 
+            staff.*, 
+            branches.name AS branch_name 
+          FROM staff 
+          LEFT JOIN branches ON staff.branch_id = branches.id 
+          ORDER BY staff.id ASC
+        `);
         setStaffList(resStaff);
       } catch (error) { 
         console.error("Database Init Error:", error); 
@@ -97,7 +112,14 @@ export const useApp = () => {
 
   const refreshData = async () => {
     if (!db) return;
-    const resStaff = await db.select<any[]>("SELECT * FROM staff ORDER BY id ASC");
+    const resStaff = await db.select<any[]>(`
+      SELECT 
+        staff.*, 
+        branches.name AS branch_name 
+      FROM staff 
+      LEFT JOIN branches ON staff.branch_id = branches.id 
+      ORDER BY staff.id ASC
+    `);
     setStaffList(resStaff);
   };
 

@@ -5,24 +5,24 @@ export const container: React.CSSProperties = {
   flexDirection: "column",
   maxWidth: "1200px",
   margin: "0 auto",
-  padding: "20px",
+  // padding: "20px",
 };
 
-export const card = (borderColor: string): React.CSSProperties => ({
+export const card: React.CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
   background: "white",
   padding: "25px",
-  borderRadius: "0 0 12px 12px",
+  borderRadius: "12px",
   boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-  borderTop: `4px solid ${borderColor}`,
-});
+};
 
 // --- タブ関連 ---
 export const tabContainer: React.CSSProperties = {
   display: "flex",
   gap: "10px",
-  borderBottom: "1px solid #ddd",
+  borderBottom: "2px solid #eee",
+  marginBottom: "25px"
 };
 
 export const tab: React.CSSProperties = {
