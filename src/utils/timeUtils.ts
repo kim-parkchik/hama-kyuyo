@@ -1,18 +1,18 @@
 /* --- ヘルパー関数（内部のみで使用） --- */
 
 const parseTimeToMinutes = (t: string): number => {
-    if (!t || t.length < 5) return 0;
-    const [h, m] = t.split(':').map(Number);
-    if (isNaN(h) || isNaN(m)) return 0;
-    return h * 60 + m;
+  if (!t || t.length < 5) return 0;
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return 0;
+  return h * 60 + m;
 };
 
 const calcNightMinutes = (start: number, end: number): number => {
-    const nightStart = 22 * 60; // 22:00
-    const nightEnd = 29 * 60;   // 翌5:00
-    const overlapStart = Math.max(start, nightStart);
-    const overlapEnd = Math.min(end, nightEnd);
-    return Math.max(0, overlapEnd - overlapStart);
+  const nightStart = 22 * 60; // 22:00
+  const nightEnd = 29 * 60;   // 翌5:00
+  const overlapStart = Math.max(start, nightStart);
+  const overlapEnd = Math.min(end, nightEnd);
+  return Math.max(0, overlapEnd - overlapStart);
 };
 
 /* --- 外部から呼び出すメインロジック --- */
@@ -21,44 +21,44 @@ const calcNightMinutes = (start: number, end: number): number => {
  * 総労働時間と深夜時間を同時に計算する（詳細版）
  */
 export const calcDetailedDiff = (inT: string, outT: string, bStart: string, bEnd: string, outV?: string, returnV?: string) => {
-    if (!inT || inT.length < 5 || !outT || outT.length < 5) {
-        return { total: "0.000", night: "0.000" };
-    }
+  if (!inT || inT.length < 5 || !outT || outT.length < 5) {
+    return { total: "0.000", night: "0.000" };
+  }
 
-    let start = parseTimeToMinutes(inT);
-    let end = parseTimeToMinutes(outT);
+  let start = parseTimeToMinutes(inT);
+  let end = parseTimeToMinutes(outT);
+  
+  // 日跨ぎ対応：退勤の方が出勤より前なら翌日とみなす
+  if (end < start) end += 24 * 60;
+
+  let totalMin = end - start;
+  let nightMin = calcNightMinutes(start, end);
+
+  const deduct = (s?: string, e?: string) => {
+    if (!s || s.length < 5 || !e || e.length < 5) return;
+    let bs = parseTimeToMinutes(s);
+    let be = parseTimeToMinutes(e);
+    if (be < bs) be += 24 * 60;
     
-    // 日跨ぎ対応：退勤の方が出勤より前なら翌日とみなす
-    if (end < start) end += 24 * 60;
+    totalMin -= (be - bs);
+    nightMin -= calcNightMinutes(bs, be);
+  };
 
-    let totalMin = end - start;
-    let nightMin = calcNightMinutes(start, end);
+  deduct(bStart, bEnd);
+  deduct(outV, returnV);
 
-    const deduct = (s?: string, e?: string) => {
-        if (!s || s.length < 5 || !e || e.length < 5) return;
-        let bs = parseTimeToMinutes(s);
-        let be = parseTimeToMinutes(e);
-        if (be < bs) be += 24 * 60;
-        
-        totalMin -= (be - bs);
-        nightMin -= calcNightMinutes(bs, be);
-    };
-
-    deduct(bStart, bEnd);
-    deduct(outV, returnV);
-
-    return {
-        total: (Math.max(0, totalMin) / 60).toFixed(3),
-        night: (Math.max(0, nightMin) / 60).toFixed(3)
-    };
+  return {
+    total: (Math.max(0, totalMin) / 60).toFixed(3),
+    night: (Math.max(0, nightMin) / 60).toFixed(3)
+  };
 };
 
 /**
  * 従来の calcDiff（後方互換性のため残す）
  */
 export const calcDiff = (inT: string, outT: string, bStart: string, bEnd: string, outV?: string, returnV?: string): string => {
-    // 内部で calcDetailedDiff を呼び出して total だけを返す
-    return calcDetailedDiff(inT, outT, bStart, bEnd, outV, returnV).total;
+  // 内部で calcDetailedDiff を呼び出して total だけを返す
+  return calcDetailedDiff(inT, outT, bStart, bEnd, outV, returnV).total;
 };
 
 /**

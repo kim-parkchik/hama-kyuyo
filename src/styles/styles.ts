@@ -16,9 +16,9 @@ export const modernIconBtnStyle = (color: string) => ({
 });
 
 export const smallBtnStyle = (color: string) => ({
-    ...modernIconBtnStyle(color),
-    padding: "4px 8px", // 上下4px、左右8pxに縮小
-    fontSize: "12px",   // 文字を少し小さく
-    lineHeight: "1",
-    minWidth: "40px"    // 最小幅を固定
+  ...modernIconBtnStyle(color),
+  padding: "4px 8px", // 上下4px、左右8pxに縮小
+  fontSize: "12px",   // 文字を少し小さく
+  lineHeight: "1",
+  minWidth: "40px"    // 最小幅を固定
 });

@@ -33,7 +33,8 @@ export const DB_SCHEMAS = [
     holiday_csv_url TEXT DEFAULT '${HOLIDAY_CSV_URL_DEFAULT}',
     holiday_source TEXT DEFAULT 'url',
     corporate_search_mode TEXT DEFAULT 'scraping', -- 'scraping' or 'api'
-    gbiz_api_key TEXT DEFAULT ''                   -- APIキー
+    gbiz_api_key TEXT DEFAULT '',
+    backup_generations INTEGER DEFAULT 10
   );`,
 
   // 2. 拠点（支店）情報
@@ -247,7 +248,18 @@ export const DB_SCHEMAS = [
   `CREATE TABLE IF NOT EXISTS bonus_item_master (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    type TEXT NOT NULL
+    type TEXT NOT NULL,              -- 'earning' (支給) or 'deduction' (控除)
+    display_order INTEGER DEFAULT 0,
+    is_default_active INTEGER DEFAULT 1 -- 🆕 追加：1なら新しい賞与作成時に自動で有効
+  );`,
+
+  // 賞与設定と項目の紐付けテーブル
+  `CREATE TABLE IF NOT EXISTS bonus_setting_items (
+    bonus_setting_id INTEGER,
+    item_id INTEGER,
+    PRIMARY KEY (bonus_setting_id, item_id),
+    FOREIGN KEY (bonus_setting_id) REFERENCES bonus_settings(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES bonus_item_master(id) ON DELETE CASCADE
   );`,
 
   // 16. スタッフ個別賞与設定
@@ -260,6 +272,26 @@ export const DB_SCHEMAS = [
     FOREIGN KEY (bonus_setting_id) REFERENCES bonus_settings(id) ON DELETE CASCADE,
     FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE,
     FOREIGN KEY (item_id) REFERENCES bonus_item_master(id) ON DELETE CASCADE
+  );`,
+
+  // 賞与計算結果保存テーブル (確定・履歴用)
+  `CREATE TABLE IF NOT EXISTS bonus_results (
+    bonus_setting_id INTEGER NOT NULL,
+    staff_id TEXT NOT NULL,
+    total_earnings INTEGER,    -- 総支給（生データ）
+    hyojun_bonus INTEGER,      -- 標準賞与額（1,000円未満切り捨て後）
+    health_insurance INTEGER,  -- 健保
+    nursing_insurance INTEGER, -- 介護
+    welfare_pension INTEGER,   -- 厚生年金
+    emp_insurance INTEGER,     -- 雇用保険
+    income_tax INTEGER,        -- 所得税
+    custom_deductions INTEGER, -- 🆕 追加：カスタム控除の合計額
+    net_pay INTEGER,           -- 差引支給額
+    is_nursing INTEGER,        -- 🆕 当時、介護保険対象者だったか（0 or 1）
+    processed_at TEXT DEFAULT (DATETIME('now', 'localtime')),
+    PRIMARY KEY (bonus_setting_id, staff_id),
+    FOREIGN KEY (bonus_setting_id) REFERENCES bonus_settings(id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE
   );`,
 
   // 17. 給与規定グループ（締日・支払日の管理）

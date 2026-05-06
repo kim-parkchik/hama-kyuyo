@@ -1,3 +1,4 @@
+import React, { useEffect } from "react"; // 🆕 ここが重要！
 // @ts-ignore
 import pkg from "../package.json";
 import { useApp } from "./useApp";
@@ -64,6 +65,40 @@ const TAB_ICONS: Record<string, React.ReactNode> = {
   user_management: <UserCog size={18} />
 };
 
+const AnimatedLogo = () => {
+  useEffect(() => {
+    S.injectLogoStyles();
+  }, []);
+
+  return (
+    /* クラス名を logo-fade-in に変更 */
+    <svg 
+      xmlns="http://www.w3.org/2000/svg" 
+      viewBox="0 0 512 512" 
+      width="256" 
+      height="256" 
+      className="logo-fade-in"
+    >
+      <defs>
+        <linearGradient id="ksu-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style={{ stopColor: "#002D62", stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: "#0055A4", stopOpacity: 1 }} />
+        </linearGradient>
+        <mask id="cutout">
+          <rect width="512" height="512" fill="white"/>
+          {/* Qの文字部分をシンプルに配置 */}
+          <g transform="translate(51, 51) scale(0.8)">
+            <path d="M256 120 C180 120 128 172 128 248 C128 324 180 376 256 376 C332 376 384 324 384 248 C384 172 332 120 256 120 Z" fill="black" />
+            <rect x="290" y="325" width="70" height="30" rx="15" transform="rotate(45 290 325)" fill="black" />
+          </g>
+        </mask>
+      </defs>
+      
+      <rect x="56" y="56" width="400" height="400" rx="90" fill="url(#ksu-gradient)" mask="url(#cutout)" />
+    </svg>
+  );
+};
+
 function App() {
   const {
     db,
@@ -97,27 +132,39 @@ function App() {
         backgroundColor: "#f5f7fa" 
       }}>
         <div style={{ textAlign: "center", marginBottom: "30px" }}>
-          <img 
-            src="/logo.svg" 
-            alt="App Logo" 
-            style={{ width: "256px", height: "auto" }} 
-          />
+          {/* 🆕 作成したアニメーションロゴに差し替え */}
+          <AnimatedLogo />
         </div>
+        
         <div style={{ display: "flex", gap: "15px" }}>
           <button 
             onClick={createNewProject} 
-            style={{ padding: "12px 24px", backgroundColor: "#002D62", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
+            style={{ 
+              padding: "12px 24px", backgroundColor: "#002D62", color: "white", 
+              border: "none", borderRadius: "4px", cursor: "pointer",
+              transition: "transform 0.2s", // 少し動きをつける
+            }}
+            onMouseOver={(e) => e.currentTarget.style.transform = "scale(1.05)"}
+            onMouseOut={(e) => e.currentTarget.style.transform = "scale(1)"}
           >
             新しく会社ファイルを作る
           </button>
           <button 
             onClick={openProject} 
-            style={{ padding: "12px 24px", backgroundColor: "white", border: "1px solid #dcdfe6", borderRadius: "4px", cursor: "pointer" }}
+            style={{ 
+              padding: "12px 24px", backgroundColor: "white", border: "1px solid #dcdfe6", 
+              borderRadius: "4px", cursor: "pointer",
+              transition: "transform 0.2s",
+            }}
+            onMouseOver={(e) => e.currentTarget.style.transform = "scale(1.05)"}
+            onMouseOut={(e) => e.currentTarget.style.transform = "scale(1)"}
           >
             既存のファイルを開く (.qp)
           </button>
         </div>
-        <div style={{ color: "#909399", fontSize: "12px" }}>{APP_NAME} ver {APP_VERSION}</div>
+        <div style={{ color: "#909399", fontSize: "12px", marginTop: "10px" }}>
+          {APP_NAME} ver {APP_VERSION}
+        </div>
       </div>
     );
   }

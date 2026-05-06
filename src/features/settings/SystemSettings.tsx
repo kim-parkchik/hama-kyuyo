@@ -11,7 +11,8 @@ export default function SystemSettings({ db, currentUser }: { db: any, currentUs
   const { 
     users, deleteUser, addUser, updatePassword,
     holidaySource, holidayUrl, updateHolidaySource, downloadSampleCsv,
-    searchMode, updateSearchMode, apiKey, updateApiKey
+    searchMode, updateSearchMode, apiKey, updateApiKey,
+    backupGenerations, updateBackupGenerations
   } = useSystemSettings(db);
 
   // 権限判定用の変数
@@ -30,7 +31,7 @@ export default function SystemSettings({ db, currentUser }: { db: any, currentUs
   const [changePassword, setChangePassword] = useState("");
   const [changePasswordConfirm, setChangePasswordConfirm] = useState("");
 
-  const [activeTab, setActiveTab] = useState<"users" | "maintenance">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "maintenance" | "backup">("users");
 
   // ✅ スタッフなら自分のみを表示するフィルタリング
   const displayUsers = isAdmin 
@@ -93,14 +94,26 @@ export default function SystemSettings({ db, currentUser }: { db: any, currentUs
 
         {/* ✅ 管理者のみ「データ更新・保守」タブを表示 */}
         {isAdmin && (
-          <div 
-            style={S.tabItem(activeTab === "maintenance")} 
-            onClick={() => setActiveTab("maintenance")}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <DatabaseZap size={18} /> データ更新・保守
+          <>
+            <div 
+              style={S.tabItem(activeTab === "maintenance")} 
+              onClick={() => setActiveTab("maintenance")}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <DatabaseZap size={18} /> データ更新・保守
+              </div>
             </div>
-          </div>
+
+            {/* 🆕 バックアップ設定タブを追加 */}
+            <div 
+              style={S.tabItem(activeTab === "backup")} 
+              onClick={() => setActiveTab("backup")}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Settings size={18} /> バックアップ設定
+              </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -168,7 +181,7 @@ export default function SystemSettings({ db, currentUser }: { db: any, currentUs
             </button>
           )}
         </div>
-      ) : (
+      ) : activeTab === "maintenance" ? (
         <div style={S.maintenanceSection}>
           {/* 法人番号検索の設定 */}
           <div style={S.settingGroup}>
@@ -295,6 +308,40 @@ export default function SystemSettings({ db, currentUser }: { db: any, currentUs
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      ) : (
+        /* 🆕 バックアップ設定画面 */
+        <div style={S.maintenanceSection}>
+          <div style={S.settingGroup}>
+            <label style={S.label}>
+              <DatabaseZap size={16} style={{ verticalAlign: "middle", marginRight: "5px" }} />
+              自動バックアップ世代管理
+            </label>
+            <p style={S.infoText}>
+              アプリ終了時、またはデータを閉じる際に自動的にバックアップを作成します。<br />
+              保存する過去の世代数を指定してください（古いものから自動削除されます）。
+            </p>
+            
+            <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
+              <input 
+                type="number" 
+                min="0" // 0を許可する
+                max="99"
+                value={backupGenerations}
+                onChange={(e) => updateBackupGenerations(parseInt(e.target.value) || 0)}
+                style={S.numberInput}
+              />
+              <span style={{ fontSize: "14px", color: backupGenerations === 0 ? "#e74c3c" : "#2c3e50" }}>
+                {backupGenerations === 0 
+                  ? "自動バックアップを行わない（非推奨）" 
+                  : `${backupGenerations} 世代分を保持する（最大 99）`}
+              </span>
+            </div>
+            
+            <p style={{ ...S.subInfo, color: "#e67e22", marginTop: "10px" }}>
+              ※世代数を増やすと、その分ディスク容量を消費します。通常は 10〜20 程度を推奨します。
+            </p>
           </div>
         </div>
       )}

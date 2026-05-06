@@ -201,3 +201,32 @@ export const systemMenuArea: CSSProperties = {
   borderTop: "1px solid rgba(255, 255, 255, 0.1)", // 透過させた白
   marginTop: "10px",
 };
+
+/**
+ * ロゴ用のアニメーション（シンプル版）
+ */
+export const injectLogoStyles = () => {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('logo-style')) return;
+
+  const style = document.createElement('style');
+  style.id = 'logo-style';
+  style.innerHTML = `
+    @keyframes logoFadeIn {
+      from { 
+        opacity: 0; 
+        transform: scale(0.97); /* わずかに小さい状態から */
+      }
+      to { 
+        opacity: 1; 
+        transform: scale(1);    /* 本来のサイズへ */
+      }
+    }
+
+    .logo-fade-in {
+      animation: logoFadeIn 0.8s ease-out forwards;
+      transform-origin: center;
+    }
+  `;
+  document.head.appendChild(style);
+};

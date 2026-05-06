@@ -6,6 +6,7 @@ export function useSystemSettings(db: any) {
   const [users, setUsers] = useState<any[]>([]);
   const [holidaySource, setHolidaySource] = useState<"url" | "file">("url");
   const [holidayUrl, setHolidayUrl] = useState("読み込み中...");
+  const [backupGenerations, setBackupGenerations] = useState<number>(10);
 
   const [searchMode, setSearchMode] = useState<string>("scraping");
   const [apiKey, setApiKey] = useState<string>("");
@@ -78,12 +79,13 @@ export function useSystemSettings(db: any) {
   const fetchSettings = async () => {
     if (!db) return;
     try {
-      const res = await db.select("SELECT holiday_csv_url, holiday_source, corporate_search_mode, gbiz_api_key FROM company WHERE id = 1") as any[];
+      const res = await db.select("SELECT holiday_csv_url, holiday_source, corporate_search_mode, gbiz_api_key, backup_generations FROM company WHERE id = 1") as any[];
       if (res?.length > 0) {
         if (res[0].holiday_csv_url) setHolidayUrl(res[0].holiday_csv_url);
         if (res[0].holiday_source) setHolidaySource(res[0].holiday_source);
         if (res[0].corporate_search_mode) setSearchMode(res[0].corporate_search_mode);
         if (res[0].gbiz_api_key) setApiKey(res[0].gbiz_api_key);
+        if (res[0].backup_generations !== undefined) setBackupGenerations(res[0].backup_generations);
       }
     } catch (error) { console.error(error); }
   };
@@ -127,6 +129,16 @@ export function useSystemSettings(db: any) {
     }
   };
 
+  // 🆕 バックアップ世代数の更新
+  const updateBackupGenerations = async (num: number) => {
+    // 0〜99の範囲に制限
+    const val = Math.max(0, Math.min(99, num));
+    setBackupGenerations(val);
+    try {
+      await db.execute("UPDATE company SET backup_generations = ? WHERE id = 1", [val]);
+    } catch (error) { console.error(error); }
+  };
+
   useEffect(() => {
     if (db) {
       fetchUsers();
@@ -146,6 +158,8 @@ export function useSystemSettings(db: any) {
     searchMode,
     updateSearchMode,
     apiKey,
-    updateApiKey
+    updateApiKey,
+    backupGenerations,
+    updateBackupGenerations
   };
 }
