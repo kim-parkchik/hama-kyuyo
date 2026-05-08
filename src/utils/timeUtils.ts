@@ -1,86 +1,80 @@
-/* --- ヘルパー関数（内部のみで使用） --- */
+import dayjs, { Dayjs } from 'dayjs';
+import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
+import minMax from 'dayjs/plugin/minMax';
+import * as Master from '../constants/salaryMaster2026';
 
-const parseTimeToMinutes = (t: string): number => {
-  if (!t || t.length < 5) return 0;
-  const [h, m] = t.split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return 0;
-  return h * 60 + m;
+dayjs.extend(isSameOrBefore);
+dayjs.extend(minMax);
+
+// 時間文字列をDayjsに変換
+export const parseToDayjs = (timeStr: string, baseDate: string = Master.DEFAULT_BASE_DATE): Dayjs => {
+  return dayjs(`${baseDate} ${timeStr}`, 'YYYY-MM-DD HH:mm');
 };
 
-const calcNightMinutes = (start: number, end: number): number => {
-  const nightStart = 22 * 60; // 22:00
-  const nightEnd = 29 * 60;   // 翌5:00
-  const overlapStart = Math.max(start, nightStart);
-  const overlapEnd = Math.min(end, nightEnd);
-  return Math.max(0, overlapEnd - overlapStart);
-};
+// 指定期間内の深夜時間を計算（分単位）
+export const getNightMinutesInPeriod = (start: Dayjs, end: Dayjs): number => {
+  // 同じ時刻、または逆転している場合は 0
+  if (end.isSameOrBefore(start)) return 0;
 
-/* --- 外部から呼び出すメインロジック --- */
+  let nightMinutes = 0;
+  let current = start.clone();
 
-/**
- * 総労働時間と深夜時間を同時に計算する（詳細版）
- */
-export const calcDetailedDiff = (inT: string, outT: string, bStart: string, bEnd: string, outV?: string, returnV?: string) => {
-  if (!inT || inT.length < 5 || !outT || outT.length < 5) {
-    return { total: "0.000", night: "0.000" };
+  // ミリ秒単位での比較に強制して、24時間以上のループにも対応
+  const endValue = end.valueOf();
+
+  while (current.valueOf() < endValue) {
+    const h = current.hour();
+    
+    // 深夜判定: 22時以降、または 5時未満
+    if (h >= Master.NIGHT_START_HOUR || h < Master.NIGHT_END_HOUR) {
+      nightMinutes++;
+    }
+    
+    // 1分進める
+    current = current.add(1, 'minute');
+
+    // 無限ループ防止（念のため24時間以上の勤務はカット）
+    if (nightMinutes > 1440) break; 
   }
 
-  let start = parseTimeToMinutes(inT);
-  let end = parseTimeToMinutes(outT);
-  
-  // 日跨ぎ対応：退勤の方が出勤より前なら翌日とみなす
-  if (end < start) end += 24 * 60;
-
-  let totalMin = end - start;
-  let nightMin = calcNightMinutes(start, end);
-
-  const deduct = (s?: string, e?: string) => {
-    if (!s || s.length < 5 || !e || e.length < 5) return;
-    let bs = parseTimeToMinutes(s);
-    let be = parseTimeToMinutes(e);
-    if (be < bs) be += 24 * 60;
-    
-    totalMin -= (be - bs);
-    nightMin -= calcNightMinutes(bs, be);
-  };
-
-  deduct(bStart, bEnd);
-  deduct(outV, returnV);
-
-  return {
-    total: (Math.max(0, totalMin) / 60).toFixed(3),
-    night: (Math.max(0, nightMin) / 60).toFixed(3)
-  };
+  return nightMinutes;
 };
 
 /**
- * 従来の calcDiff（後方互換性のため残す）
+ * 週の開始日をキーとして返す（週40時間超の集計用）
+ * weekStartDay: 0=日曜, 1=月曜, ..., 6=土曜
  */
-export const calcDiff = (inT: string, outT: string, bStart: string, bEnd: string, outV?: string, returnV?: string): string => {
-  // 内部で calcDetailedDiff を呼び出して total だけを返す
-  return calcDetailedDiff(inT, outT, bStart, bEnd, outV, returnV).total;
+export const getWeekKey = (dateStr: string, weekStartDay: number = 0): string => {
+  // 1. Dayjsオブジェクトに変換
+  const d = dayjs(dateStr);
+  
+  // 2. 現在の曜日(d.day())から、週の開始曜日までの差分を計算
+  const diff = (d.day() - weekStartDay + 7) % 7;
+  
+  // 3. 差分を引いて「週の開始日」を求め、YYYY-MM-DD 形式で返す
+  // .format() を使うことで、タイムゾーンによる日付ズレを確実に防ぎます
+  return d.subtract(diff, 'day').format('YYYY-MM-DD');
 };
 
 /**
- * 小数の時間を「〇時間〇分」の形式に変換する
- * 例: 4.5 -> "4時間30分"
- * 例: 10.667 -> "10時間40分"
+ * 小数形式の時間(8.5)を、日本語表記("8時間30分")に変換
  */
 export const formatHours = (decimalHours: number): string => {
-  // 1. そもそも数値じゃない、または NaN の場合は「0分」と返す
-  if (typeof decimalHours !== 'number' || isNaN(decimalHours) || decimalHours <= 0) {
-    return "0分";
-  }
-  
-  try {
-    const h = Math.floor(decimalHours);
-    const m = Math.round((decimalHours - h) * 60);
-    
-    if (h === 0) return `${m}分`;
-    if (m === 0) return `${h}時間`;
-    return `${h}時間${m}分`;
-  } catch (e) {
-    // 万が一ここでエラーが起きても全体を落とさない
-    return "計算中...";
-  }
+  if (!decimalHours || decimalHours <= 0) return "0分";
+  const totalMinutes = Math.round(decimalHours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${m}分`;
+  if (m === 0) return `${h}時間`;
+  return `${h}時間${m}分`;
+};
+
+/**
+ * 小数形式の時間(8.5)を、時刻形式("08:30")に変換
+ */
+export const decimalToTimeStr = (decimalHours: number): string => {
+  const totalMinutes = Math.round(decimalHours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 };

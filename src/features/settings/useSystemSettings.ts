@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ask, save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
+import { hashPassword } from "../../utils/authUtils";
 
 export function useSystemSettings(db: any) {
   const [users, setUsers] = useState<any[]>([]);
@@ -10,14 +11,6 @@ export function useSystemSettings(db: any) {
 
   const [searchMode, setSearchMode] = useState<string>("scraping");
   const [apiKey, setApiKey] = useState<string>("");
-
-  const hashPassword = async (password: string) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-  };
 
   const updatePassword = async (loginId: string, newPassword: string) => {
     try {

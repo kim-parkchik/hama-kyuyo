@@ -7,9 +7,18 @@
  *  - 所定時間超〜8時間 → 法定内残業（割増義務なし、基本単価のみ）
  *  - 上記どちらかで月60時間超の分 → 割増50%必須
  */
+import dayjs from 'dayjs';
+import isSameOrAfter from 'dayjs/plugin/isSameOrAfter';
 import { applyRounding } from './payrollUtils';
+import { 
+  parseToDayjs, 
+  getNightMinutesInPeriod, 
+  getWeekKey
+} from './timeUtils';
 import * as Master from '../constants/salaryMaster2026';
 
+// プラグインの有効化
+dayjs.extend(isSameOrAfter);
 
 export interface SalaryExtras {
   allowanceName: string;
@@ -75,103 +84,73 @@ const getGensenTax = (taxBase: number, dependents: number): number => {
   return 0;
 };
 
+// 介護保険対象判定
 export const checkNursingCare = (birthday: string, year: number, month: number): boolean => {
   if (!birthday) return false;
-  const b = new Date(birthday);
-  const reach40 = new Date(b.getFullYear() + Master.NURSING_CARE_START_AGE, b.getMonth(), b.getDate() - 1);
-  const reach65 = new Date(b.getFullYear() + Master.NURSING_CARE_END_AGE, b.getMonth(), b.getDate() - 1);
-  const target  = new Date(year, month - 1, 1);
-  return (
-    target >= new Date(reach40.getFullYear(), reach40.getMonth(), 1) &&
-    target <  new Date(reach65.getFullYear(), reach65.getMonth(), 1)
-  );
-};
+  
+  const birthDate = dayjs(birthday);
+  const targetDate = dayjs(new Date(year, month - 1, 1));
+  
+  // 40歳に達する月の初日
+  const reach40 = birthDate.add(Master.NURSING_CARE_START_AGE, 'year').startOf('month');
+  // 65歳に達する月の初日
+  const reach65 = birthDate.add(Master.NURSING_CARE_END_AGE, 'year').startOf('month');
 
-/* --- ヘルパー関数（内部のみで使用） --- */
-
-const parseTimeToMinutes = (t: string): number => {
-  if (!t || t.length < 5) return 0;
-  const [h, m] = t.split(':').map(Number);
-  if (isNaN(h) || isNaN(m)) return 0;
-  return h * 60 + m;
-};
-
-const calcNightMinutes = (start: number, end: number): number => {
-  const nightStart = 22 * 60; // 22:00
-  const nightEnd = 29 * 60;   // 翌5:00
-  const overlapStart = Math.max(start, nightStart);
-  const overlapEnd = Math.min(end, nightEnd);
-  return Math.max(0, overlapEnd - overlapStart);
+  return targetDate.isSameOrAfter(reach40) && targetDate.isBefore(reach65);
 };
 
 /* --- 外部から呼び出すメインロジック --- */
 
 /**
- * 総労働時間と深夜時間を同時に計算する（詳細版）
+ * 総労働時間と深夜時間を同時に計算する
  */
 export const calcDetailedDiff = (inT: string, outT: string, bStart: string, bEnd: string, outV?: string, returnV?: string) => {
-  if (!inT || inT.length < 5 || !outT || outT.length < 5) {
-    return { total: "0.000", night: "0.000" };
+  const isValidTime = (t?: string) => t && t !== "" && t !== "--:--" && t.length >= 5;
+
+  if (!isValidTime(inT) || !isValidTime(outT)) {
+    return { total: NaN, night: NaN };
   }
 
-  let start = parseTimeToMinutes(inT);
-  let end = parseTimeToMinutes(outT);
+  const start = parseToDayjs(inT);
+  let end = parseToDayjs(outT);
   
-  // 日跨ぎ対応：退勤の方が出勤より前なら翌日とみなす
-  if (end < start) end += 24 * 60;
+  // 深夜02:00 〜 06:00 のような場合、end は start より後なのでそのまま。
+  // 22:00 〜 02:00 のような場合のみ、end を翌日にする。
+  if (end.isBefore(start)) {
+    end = end.add(1, 'day');
+  }
 
-  let totalMin = end - start;
-  let nightMin = calcNightMinutes(start, end);
+  let totalMin = end.diff(start, 'minute');
+  // この nightMin の計算に修正した getNightMinutesInPeriod を使う
+  let nightMin = getNightMinutesInPeriod(start, end);
 
-  const deduct = (s?: string, e?: string) => {
-    if (!s || s.length < 5 || !e || e.length < 5) return;
-    let bs = parseTimeToMinutes(s);
-    let be = parseTimeToMinutes(e);
-    if (be < bs) be += 24 * 60;
-    
-    totalMin -= (be - bs);
-    nightMin -= calcNightMinutes(bs, be);
+  // 休憩時間の控除
+  const deduct = (sStr?: string, eStr?: string) => {
+    // 1. バリデーション
+    if (!isValidTime(sStr) || !isValidTime(eStr)) return;
+
+    // 2. Dayjsオブジェクトに変換（変数名を引数と明確に分ける）
+    const ds = parseToDayjs(sStr!);
+    let de = parseToDayjs(eStr!);
+
+    // 3. 日またぎ補正（休憩終了が開始より前なら翌日扱い）
+    if (de.isBefore(ds)) {
+      de = de.add(1, 'day');
+    }
+
+    // 4. 計算と減算
+    const diffMin = de.diff(ds, 'minute');
+    totalMin -= diffMin;
+    nightMin -= getNightMinutesInPeriod(ds, de);
   };
 
   deduct(bStart, bEnd);
   deduct(outV, returnV);
 
   return {
-    total: (Math.max(0, totalMin) / 60).toFixed(3),
-    night: (Math.max(0, nightMin) / 60).toFixed(3)
+    total: Math.round((totalMin / 60) * 1000) / 1000,
+    night: Math.round((nightMin / 60) * 1000) / 1000
   };
-};
-
-/**
- * 従来の calcDiff（後方互換性のため残す）
- */
-export const calcDiff = (inT: string, outT: string, bStart: string, bEnd: string, outV?: string, returnV?: string): string => {
-  // 内部で calcDetailedDiff を呼び出して total だけを返す
-  return calcDetailedDiff(inT, outT, bStart, bEnd, outV, returnV).total;
-};
-
-/**
- * 小数の時間を「〇時間〇分」の形式に変換する
- * 例: 4.5 -> "4時間30分"
- * 例: 10.667 -> "10時間40分"
- */
-export const formatHours = (decimalHours: number): string => {
-  // 1. そもそも数値じゃない、または NaN の場合は「0分」と返す
-  if (typeof decimalHours !== 'number' || isNaN(decimalHours) || decimalHours <= 0) {
-    return "0分";
-  }
-  
-  try {
-    const h = Math.floor(decimalHours);
-    const m = Math.round((decimalHours - h) * 60);
-    
-    if (h === 0) return `${m}分`;
-    if (m === 0) return `${h}時間`;
-    return `${h}時間${m}分`;
-  } catch (e) {
-    // 万が一ここでエラーが起きても全体を落とさない
-    return "計算中...";
-  }
 };
 
 /**
@@ -228,20 +207,6 @@ export const saveSalaryResult = async (
     console.error("Failed to save salary result:", error);
     return { success: false, error };
   }
-};
-
-/**
- * 週番号を返す（週の開始曜日を指定可能）
- * weekStartDay: 0=日曜, 1=月曜, ..., 6=土曜
- */
-const getWeekKey = (dateStr: string, weekStartDay: number): string => {
-  const d = new Date(dateStr);
-  const dow = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-  // 週の開始日曜から何日目か（0〜6）
-  const daysFromStart = (dow - weekStartDay + 7) % 7;
-  const weekStart = new Date(d);
-  weekStart.setDate(d.getDate() - daysFromStart);
-  return weekStart.toISOString().split('T')[0]; // 週の最初の日をキーに
 };
 
 export const calculateSalary = (

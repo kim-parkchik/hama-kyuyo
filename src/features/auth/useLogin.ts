@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core"; // 🆕 追加
+import { verifyPassword } from "../../utils/authUtils";
 
 export function useLogin(db: any, onLoginSuccess: (user: any) => void) {
   const [loginId, setLoginId] = useState("");
@@ -21,10 +21,7 @@ export function useLogin(db: any, onLoginSuccess: (user: any) => void) {
         const user = users[0];
 
         // 2. Rust側に「入力パスワード」と「DBのハッシュ」を渡して検証してもらう
-        const isValid = await invoke<boolean>("verify_password", {
-          password: password,
-          hash: user.password_hash,
-        });
+        const isValid = await verifyPassword(password, user.password_hash);
 
         if (isValid) {
           // ログイン成功

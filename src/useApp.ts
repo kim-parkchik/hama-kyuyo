@@ -9,6 +9,7 @@ import { DB_SCHEMAS } from "./types/dbSchema";
 import { PENSION_RATE, HOLIDAY_CSV_URL_DEFAULT } from "./constants/salaryMaster2026";
 import { APP_DIR_NAME, BACKUP_DIR_NAME, EXT_MAIN, EXT_BACKUP, APP_PROJECT_NAME } from "./constants/appConfig";
 import * as S from "./App.styles";
+import { writeLog } from "./utils/logUtils";
 
 export const useApp = () => {
   const [db, setDb] = useState<Database | null>(null);
@@ -148,6 +149,14 @@ export const useApp = () => {
         ORDER BY staff.id ASC
       `);
       setStaffList(resStaff);
+
+      // 🆕 ログ追加
+      await writeLog(
+        sqlite,
+        "info",
+        "system",
+        `会社ファイルを開きました: ${path}`
+      );
       
     } catch (error) {
       console.error("Database Load Error:", error);

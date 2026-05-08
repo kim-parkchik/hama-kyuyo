@@ -4,9 +4,18 @@
  * すべての料率は [本人負担分(EE), 総料率(Total)] のタプル形式で定義。
  */
 
+export const DEFAULT_BASE_DATE = '2026-01-01';
 export const MASTER_YEAR = 2026;
 export const MASTER_MONTH = 3; // 協会けんぽの料率改定は通常3月（4月納付分〜）
 
+
+/** 深夜労働の定義 (22:00 - 05:00) */
+export const NIGHT_START_HOUR = 22;
+export const NIGHT_END_HOUR = 5;
+export const NIGHT_END_HOUR_NEXT_DAY = 29; // 翌日5時 (24 + 5)
+
+export const NIGHT_START_MINUTES = NIGHT_START_HOUR * 60;
+export const NIGHT_END_MINUTES = NIGHT_END_HOUR_NEXT_DAY * 60;
 
 // --- 0. 都道府県マスター (JISコード準拠) ---
 export const PREFECTURE_MASTER = [
@@ -286,3 +295,14 @@ export const ROUNDING_OPTIONS: { label: string; value: RoundingMode }[] = [
  * ※CompanyManagerで設定する「非課税限度額」のデフォルト値等に使用
  */
 export const DEFAULT_COMMUTING_TAX_FREE_LIMIT = 150000;
+
+// --- 14. 有給休暇・時間単位年休（法定基準） ---
+
+/** 時間単位年休の最小単位 (デフォルト1時間) */
+export const PAID_LEAVE_UNIT = 1.0;
+
+/** 時間単位年休の年間上限日数 (法第39条第4項に基づく原則) */
+export const ANNUAL_PAID_LEAVE_MAX_DAYS = 5;
+
+/** 1日の時間有給取得上限 (その人の1日の所定労働時間が基準) */
+export const MAX_PAID_LEAVE_PER_DAY = 8.0;

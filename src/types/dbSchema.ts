@@ -27,7 +27,7 @@ export const DB_SCHEMAS = [
     round_overtime TEXT DEFAULT 'round',
     round_social_ins TEXT DEFAULT 'floor',
     round_emp_ins TEXT DEFAULT 'round',
-    default_emp_ins_type TEXT DEFAULT 'general', -- 🆕 追加：会社全体の雇用保険区分
+    default_emp_ins_type TEXT DEFAULT 'general', -- 会社全体の雇用保険区分
     week_start_day INTEGER DEFAULT 0,  -- 週の開始曜日 (0=日曜, 1=月曜, ..., 6=土曜)
     annual_holidays INTEGER DEFAULT 120,
     holiday_csv_url TEXT DEFAULT '${HOLIDAY_CSV_URL_DEFAULT}',
@@ -53,8 +53,8 @@ export const DB_SCHEMAS = [
   `CREATE TABLE IF NOT EXISTS calendar_patterns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    is_invalid INTEGER DEFAULT 0,    -- 🆕 0:正常, 1:法違反(休日不足など)
-    error_message TEXT               -- 🆕 なぜダメなのかの理由（UI表示用）
+    is_invalid INTEGER DEFAULT 0,    -- 0:正常, 1:法違反(休日不足など)
+    error_message TEXT               -- なぜダメなのかの理由（UI表示用）
   );`,
 
   // 4. カレンダー詳細
@@ -90,7 +90,7 @@ export const DB_SCHEMAS = [
     retirement_date TEXT, 
     is_executive INTEGER DEFAULT 0,
     payroll_group_id INTEGER DEFAULT 1,
-    social_insurance_group_id INTEGER DEFAULT 1, -- 🆕 追加：社保規定グループとの紐付け
+    social_insurance_group_id INTEGER DEFAULT 1, -- 社保規定グループとの紐付け
     calendar_pattern_id INTEGER DEFAULT 1,
     work_days TEXT,
     scheduled_in TEXT DEFAULT '',
@@ -109,7 +109,7 @@ export const DB_SCHEMAS = [
     resident_tax INTEGER DEFAULT 0,
     standard_remuneration INTEGER DEFAULT 0,
     is_employment_ins_eligible INTEGER DEFAULT 1,
-    employment_insurance_type TEXT,  -- 🆕 追加：個人別の雇用保険区分（NULLなら会社設定に従う）
+    employment_insurance_type TEXT,  -- 個人別の雇用保険区分（NULLなら会社設定に従う）
     health_ins_num TEXT,      -- 健康保険被保険者番号
     pension_num TEXT,         -- 厚生年金整理番号
     employment_ins_num TEXT,  -- 雇用保険被保険者番号
@@ -139,13 +139,16 @@ export const DB_SCHEMAS = [
     work_type TEXT DEFAULT 'normal',
     paid_leave_hours REAL DEFAULT 0,
     memo TEXT,
+    is_finalized INTEGER DEFAULT 0,  -- 0: 未確定, 1: 確定済み
+    finalized_at TEXT,               -- 確定された日時
+    finalized_by TEXT,               -- 確定させたユーザー名
     work_hours REAL DEFAULT 0,
     night_hours REAL DEFAULT 0,
     actual_base_wage INTEGER, 
     overtime_rate REAL,
     night_rate REAL,
-    is_error INTEGER DEFAULT 0,    -- 🆕 追加：0:正常, 1:再計算・確認が必要
-    error_message TEXT,            -- 🆕 追加：エラー内容（「起算日変更による再計算待ち」など）
+    is_error INTEGER DEFAULT 0,    -- 0:正常, 1:再計算・確認が必要
+    error_message TEXT,            -- エラー内容（「起算日変更による再計算待ち」など）
     UNIQUE(staff_id, work_date),
     FOREIGN KEY(staff_id) REFERENCES staff(id) ON DELETE CASCADE
   );`,
@@ -250,7 +253,7 @@ export const DB_SCHEMAS = [
     name TEXT NOT NULL,
     type TEXT NOT NULL,              -- 'earning' (支給) or 'deduction' (控除)
     display_order INTEGER DEFAULT 0,
-    is_default_active INTEGER DEFAULT 1 -- 🆕 追加：1なら新しい賞与作成時に自動で有効
+    is_default_active INTEGER DEFAULT 1 -- 1なら新しい賞与作成時に自動で有効
   );`,
 
   // 賞与設定と項目の紐付けテーブル
@@ -285,9 +288,9 @@ export const DB_SCHEMAS = [
     welfare_pension INTEGER,   -- 厚生年金
     emp_insurance INTEGER,     -- 雇用保険
     income_tax INTEGER,        -- 所得税
-    custom_deductions INTEGER, -- 🆕 追加：カスタム控除の合計額
+    custom_deductions INTEGER, -- カスタム控除の合計額
     net_pay INTEGER,           -- 差引支給額
-    is_nursing INTEGER,        -- 🆕 当時、介護保険対象者だったか（0 or 1）
+    is_nursing INTEGER,        -- 当時、介護保険対象者だったか（0 or 1）
     processed_at TEXT DEFAULT (DATETIME('now', 'localtime')),
     PRIMARY KEY (bonus_setting_id, staff_id),
     FOREIGN KEY (bonus_setting_id) REFERENCES bonus_settings(id) ON DELETE CASCADE,
@@ -301,7 +304,7 @@ export const DB_SCHEMAS = [
     closing_day INTEGER NOT NULL,   -- 1~28 または 99(末日)
     is_next_month INTEGER NOT NULL, -- 0:当月払い, 1:翌月払い
     payment_day INTEGER NOT NULL,    -- 1~31
-    is_active INTEGER DEFAULT 1      -- 🆕 1:有効, 0:廃止
+    is_active INTEGER DEFAULT 1      -- 1:有効, 0:廃止
   );`,
 
   // 18. 社会保険規定グループ
@@ -316,14 +319,24 @@ export const DB_SCHEMAS = [
     care_rate REAL DEFAULT 0.0,      
     pension_rate REAL DEFAULT ${PENSION_RATE[0]},  -- 厚生年金は折半後(18.3 / 2)の値を保持
 
-    -- ★ 🆕 会社負担率（会社が納付する分：法定福利費の計算用）
+    -- ★ 会社負担率（会社が納付する分：法定福利費の計算用）
     -- 協会けんぽ以外（組合健保など）で負担割合が折半でない場合に対応
     comp_health_rate REAL DEFAULT 0.0,
     comp_care_rate REAL DEFAULT 0.0,
     comp_pension_rate REAL DEFAULT ${PENSION_RATE[0]},
-    child_allowance_rate REAL DEFAULT ${CHILD_ALLOWANCE_RATE}, -- 🆕 子ども・子育て拠出金（会社全額負担分）
+    child_allowance_rate REAL DEFAULT ${CHILD_ALLOWANCE_RATE}, -- 子ども・子育て拠出金（会社全額負担分）
 
     fixed_amount INTEGER DEFAULT 0,  -- 定額時の金額
     is_active INTEGER DEFAULT 1
+  );`,
+
+  // log
+  `CREATE TABLE IF NOT EXISTS app_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    level TEXT NOT NULL,
+    category TEXT NOT NULL,
+    message TEXT NOT NULL,
+    user_name TEXT
   );`
 ];

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { hashPassword } from "../../utils/authUtils";
 
 export function useFirstSetup(db: any, onComplete: () => void) {
   const [loginId] = useState("admin");
@@ -7,15 +7,6 @@ export function useFirstSetup(db: any, onComplete: () => void) {
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [error, setError] = useState("");
-
-  // 🆕 ハッシュ化関数（useSystemSettingsと同じもの）
-  const hashPassword = async (password: string) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(password);
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,11 +17,7 @@ export function useFirstSetup(db: any, onComplete: () => void) {
     if (!displayName.trim()) return setError("表示名を入力してください。");
 
     try {
-      // 🆕 Rust 側の hash_password コマンドを呼び出す！
-      // ここでさっき lib.rs に書いた Argon2 が火を吹きます。
-      const hashedPassword = await invoke<string>("hash_password", { 
-        password: password 
-      });
+      const hashedPassword = await hashPassword(password);
 
       await db.execute(
         `INSERT INTO users (login_id, display_name, password_hash, role) 
