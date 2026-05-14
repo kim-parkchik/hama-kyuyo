@@ -1,10 +1,10 @@
 /**
- * 2026年分（令和8年分） 源泉徴収税額マスター
+ * 2025年分（令和7年分） 源泉徴収税額マスター
  * 
  * 参照元: 国税庁「令和6年分 源泉徴収税額表」
  * URL: https://www.nta.go.jp/publication/ponflet/koho/pamph/gensen/zeigakuhyo2023/01.htm
  * 
- * 適用期間: 2026年1月1日 〜 
+ * 適用期間: 2025年1月1日 〜 2025年12月31日
  * (※2024年（令和6年）の税制改正以降、大きな変更がない限り継続適用)
  * 
  * 内容:
@@ -13,7 +13,7 @@
  * 3. 通勤手当非課税限度額
  */
 
-export const MASTER_YEAR = 2026;
+export const MASTER_YEAR = 2025;
 export const MASTER_MONTH = 1;
 
 // 源泉徴収税額表（月額・甲欄）
@@ -130,7 +130,6 @@ export const TAX_EXTRA_CONFIG = {
   // 賞与算出率: 7人を超える1人につき算出率から差し引く率
   BONUS_ADDITIONAL_CHILD_RATE_DEDUCTION: 0.02042, // 2.042%
 };
-
 /** 
  * 通勤手当の非課税限度額 (月額) 
  * ※CompanyManagerで設定する「非課税限度額」のデフォルト値等に使用
