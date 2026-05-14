@@ -1,7 +1,7 @@
 import React from 'react';
 import * as S from "./PayStubModal.styles";
 import { usePayStubModal } from './usePayStubModal';
-import * as Master from '../../constants/salaryMaster2026';
+import * as Master from '../../constants';
 import { PREFECTURES } from '../../utils/calcSalary';
 
 interface Props {

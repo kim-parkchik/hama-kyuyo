@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import dayjs from "dayjs";
 import { generateAttendanceCSV, parseAttendanceCSV } from "../../utils/csvUtils";
 import { calculateSalary, calcDetailedDiff } from "../../utils/calcSalary";
-import { OVERTIME_RATE, NIGHT_SHIFT_RATE } from '../../constants/salaryMaster2026';
+import * as Master from '../../constants';
 
 /**
  * 給与計算期間を算出する
@@ -164,11 +164,8 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
 
   // --- 勤怠データの読み込み ---
   const loadMonthlyData = useCallback(async () => {
-    // 1. まず現在の表示をクリアする（これが最重要！）
-    // これをしないと、DB取得待ちの間に前の人のデータが見えてしまいます
     setMonthlyWorkData({});
 
-    // payrollPeriod や selectedStaffId が揃うまで中断
     if (!db || !selectedStaffId || !payrollPeriod) return;
 
     setIsLoading(true);
@@ -179,17 +176,22 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
         [selectedStaffId, startStr, endStr]
       ) as any[];
 
-      // 2. 新しいスタッフ・期間用の空枠を、最新の dateList から作成
       const loaded: Record<string, any> = {};
       dateList.forEach(d => {
         loaded[d] = { 
           in: "", out: "", bStart: "", bEnd: "", outTime: "", returnTime: "", 
           is_finalized: 0, workType: "normal", paidHours: 0, memo: "",
-          savedHours: 0, nightHours: 0, csv_entry_time: "", csv_exit_time: ""
+          savedHours: 0, nightHours: 0, 
+          // --- ここに初期値をすべて追加 ---
+          csv_entry_time: "", 
+          csv_exit_time: "",
+          csv_break_start: "",
+          csv_break_end: "",
+          csv_out_time: "",
+          csv_return_time: ""
         };
       });
 
-      // 3. DBから取得した実データを上書き
       if (Array.isArray(attendanceData)) {
         attendanceData.forEach(row => {
           loaded[row.work_date] = { 
@@ -206,13 +208,17 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
             workType: row.work_type || "normal", 
             paidHours: row.paid_leave_hours || 0, 
             memo: row.memo || "",
-            csv_entry_time: row.csv_entry_time,
-            csv_exit_time: row.csv_exit_time
+            // --- ここでDBから取得した値を反映させる ---
+            csv_entry_time: row.csv_entry_time || "",
+            csv_exit_time: row.csv_exit_time || "",
+            csv_break_start: row.csv_break_start || "",
+            csv_break_end: row.csv_break_end || "",
+            csv_out_time: row.csv_out_time || "",
+            csv_return_time: row.csv_return_time || ""
           };
         });
       }
       
-      // 4. まとめて反映
       setMonthlyWorkData(loaded);
 
     } catch (e) {
@@ -220,7 +226,6 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
     } finally {
       setTimeout(() => setIsLoading(false), 50);
     }
-    // 依存配列に dateList を忘れずに
   }, [db, selectedStaffId, payrollPeriod, dateList]);
 
   // --- 操作系 ---
@@ -241,30 +246,65 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
     if (!db || !selectedStaffId || !selectedStaff) return;
     
     const row = monthlyWorkData[date];
-    const { total, night } = calcDetailedDiff(row.in, row.out, row.bStart, row.bEnd, row.outTime, row.returnTime);
+
+    // --- 🆕 優先順位ロジックの適用 ---
+    // 手入力があればそれを使い、なければCSV（打刻データ）を使う。
+    // TimeInputPairから ":" が来ている場合は空とみなす。
+    const getVal = (manual: string, csv: string) => 
+      (manual && manual !== ":") ? manual : (csv || "");
+
+    const effectiveIn = getVal(row.in, row.csv_entry_time);
+    const effectiveOut = getVal(row.out, row.csv_exit_time);
+    const effectiveBStart = getVal(row.bStart, row.csv_break_start);
+    const effectiveBEnd = getVal(row.bEnd, row.csv_break_end);
+    const effectiveOutTime = getVal(row.outTime, row.csv_out_time);
+    const effectiveReturnTime = getVal(row.returnTime, row.csv_return_time);
+
+    // 確定計算には「有効な値」を渡す
+    const { total, night } = calcDetailedDiff(
+      effectiveIn, effectiveOut, 
+      effectiveBStart, effectiveBEnd, 
+      effectiveOutTime, effectiveReturnTime
+    );
     
     try {
       const isMonthly = selectedStaff.wage_type === "monthly";
       const now = dayjs().format('YYYY-MM-DD HH:mm');
 
+      // 🆕 UPSERT (ON CONFLICT) を使って、確定した計算結果を保存
+      // 他の列（csv_...系）を破壊せずに、確定に必要な列だけを更新します
       await db.execute(
-        `INSERT OR REPLACE INTO attendance (
+        `INSERT INTO attendance (
           staff_id, work_date, entry_time, exit_time, 
           break_start, break_end, out_time, return_time, 
           work_hours, night_hours,
           actual_base_wage, overtime_rate, night_rate,
           work_type, paid_leave_hours, memo,
           is_finalized, finalized_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(staff_id, work_date) DO UPDATE SET
+          entry_time = excluded.entry_time,
+          exit_time = excluded.exit_time,
+          break_start = excluded.break_start,
+          break_end = excluded.break_end,
+          out_time = excluded.out_time,
+          return_time = excluded.return_time,
+          work_hours = excluded.work_hours,
+          night_hours = excluded.night_hours,
+          actual_base_wage = excluded.actual_base_wage,
+          work_type = excluded.work_type,
+          paid_leave_hours = excluded.paid_leave_hours,
+          memo = excluded.memo,
+          is_finalized = excluded.is_finalized,
+          finalized_at = excluded.finalized_at`,
         [
           selectedStaffId, date, row.in||"", row.out||"", 
           row.bStart||"", row.bEnd||"", row.outTime||"", row.returnTime||"", 
           total, night,
           isMonthly ? 0 : selectedStaff.base_wage, 
-          OVERTIME_RATE, NIGHT_SHIFT_RATE,
+          Master.OVERTIME_RATE, Master.NIGHT_SHIFT_RATE,
           row.workType, Number(row.paidHours)||0, row.memo||"",
-          1, // is_finalized = 1 (確定)
-          now // finalized_at
+          1, now
         ]
       );
 
@@ -335,40 +375,69 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
 
   // --- 給与集計 ---
   const calcResult = useMemo(() => {
+    // 【デバッグ用】ここを追加
+    console.log("DEBUG: selectedStaff", selectedStaff);
+    console.log("DEBUG: wage_type", selectedStaff?.wage_type);
+    console.log("DEBUG: base_wage", selectedStaff?.base_wage);
+    
+    // 1. 初期値をエンジン側の戻り値の構造と合わせる
     const defaultResult = {
       totalWorkHours: 0,
       totalOvertimeHours: 0,
       totalNightHours: 0,
       highPremiumHours: 0,
+      basePay: 0,         // 🆕 これを追加
       absenceDeduction: 0,
       commutePay: 0,
       totalEarnings: 0,
     };
 
-    // 修正ポイント：isSaved ではなく is_finalized を見る
-    const attendanceRows = Object.entries(monthlyWorkData)
-      .filter(([_, row]) => row.is_finalized === 1) 
-      .map(([date, row]) => ({
-        work_date: date,
-        work_hours: row.savedHours || 0,
-        night_hours: row.night_hours || 0,
-        actual_base_wage: row.actual_base_wage
-      }));
-
-    if (!selectedStaff || attendanceRows.length === 0 || !companySettings) {
+    if (!selectedStaff || !companySettings) {
       return defaultResult;
     }
 
-    // ここで calculateSalary を実行（必要な引数はフック内で管理しているはず）
+    // デバッグログ：ここが 250000 になっているか確認！
+    console.log("SENDING TO ENGINE:", selectedStaff.base_wage);
+
+    const attendanceRows = Object.entries(monthlyWorkData)
+      .filter(([_, row]) => row.is_finalized === 1)
+      .map(([date, row]) => ({
+        work_date: date,
+        work_hours: Number(row.savedHours) || 0,
+        night_hours: Number(row.nightHours) || 0,
+        actual_base_wage:
+          selectedStaff?.wage_type === "hourly"
+            ? Number(selectedStaff.base_wage || 0)
+            : 0,
+        work_type: row.workType || "normal",
+        is_late: Number(row.is_late) || 0,
+        is_early: Number(row.is_early) || 0,
+        paid_leave_hours: Number(row.paidHours) || 0,
+      }));
+
+    // 条件を緩めたのは正解です！
+    if (!selectedStaff || !companySettings) {
+      return defaultResult;
+    }
+
+    // エンジン（calculateSalary）を呼び出す
     const result = calculateSalary(
       selectedStaff, 
       attendanceRows, 
-      { allowanceName: "", allowanceAmount: 0, residentTax: 0, prefecture: branchPrefecture, dependents: 0, customItems: [] }, 
+      { 
+        allowanceName: "", 
+        allowanceAmount: 0, 
+        residentTax: 0, 
+        prefecture: branchPrefecture, 
+        dependents: 0, 
+        customItems: [] 
+      }, 
       targetYear, 
       targetMonth, 
       companySettings
     );
 
+    // 2. もしエンジンから basePay が返ってきていればそれを使う
     return result || defaultResult;
   }, [monthlyWorkData, selectedStaff, companySettings, branchPrefecture, targetYear, targetMonth]);
 
@@ -485,6 +554,8 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
       reader.onload = async (event) => {
         try {
           const text = event.target?.result as string;
+          // parseAttendanceCSV の中で trim 処理がされているか確認が必要ですが、
+          // ここでは row から値を取り出す際に念のため trim() を検討します。
           const rows = parseAttendanceCSV(text);
           if (rows.length === 0) return;
 
@@ -493,41 +564,34 @@ export function useAttendanceManager({ db, staffList, targetYear, setTargetYear,
             const date = row["日付"];
             if (!sId || !date) continue;
 
-            const staff = staffList.find((s: any) => String(s.id) === String(sId));
-            if (!staff) continue;
-
-            // CSVの値を元に計算
-            const { total, night } = calcDetailedDiff(
-                row["出勤"], row["退勤"], row["休憩始"], row["休憩終"], row["外出"], row["戻り"]
-            );
-
-            await db.execute("DELETE FROM attendance WHERE staff_id = ? AND work_date = ?", [sId, date]);
-            
-            const isMonthly = staff.wage_type === "monthly";
+            // CSVの日本語ヘッダー名を指定して確実に取得
+            const valEntry  = row["出勤"];
+            const valExit   = row["退勤"];
+            const valBStart = row["休憩始"];
+            const valBEnd   = row["休憩終"];
+            const valOut    = row["外出"];
+            const valReturn = row["戻り"];
 
             await db.execute(
-              `INSERT OR REPLACE INTO attendance (
-                staff_id, work_date, entry_time, exit_time, 
-                break_start, break_end, out_time, return_time, 
-                work_hours, night_hours,
-                actual_base_wage, overtime_rate, night_rate,
-                work_type, paid_leave_hours, 
-                csv_entry_time, csv_exit_time, csv_break_start, csv_break_end, csv_out_time, csv_return_time,
-                is_finalized  -- ★カラムを追加
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, // ★パラメータ(?)と 0 を追加
-              [
-                sId, date, row["出勤"]||"", row["退勤"]||"", 
-                row["休憩始"]||"", row["休憩終"]||"", row["外出"]||"", row["戻り"]||"", 
-                total, night,
-                isMonthly ? 0 : staff.base_wage, 
-                OVERTIME_RATE, NIGHT_SHIFT_RATE,
-                "normal", 0,
-                row["出勤"]||"", row["退勤"]||"", row["休憩始"]||"", row["休憩終"]||"", row["外出"]||"", row["戻り"]||""
-              ]
+              `INSERT INTO attendance (
+                staff_id, work_date, 
+                csv_entry_time, csv_exit_time, 
+                csv_break_start, csv_break_end, 
+                csv_out_time, csv_return_time,
+                work_type, is_finalized
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'normal', 0)
+              ON CONFLICT(staff_id, work_date) DO UPDATE SET
+                csv_entry_time = excluded.csv_entry_time,
+                csv_exit_time = excluded.csv_exit_time,
+                csv_break_start = excluded.csv_break_start,
+                csv_break_end = excluded.csv_break_end,
+                csv_out_time = excluded.csv_out_time,
+                csv_return_time = excluded.csv_return_time
+              WHERE is_finalized = 0`,
+              [sId, date, valEntry || "", valExit || "", valBStart || "", valBEnd || "", valOut || "", valReturn || ""]
             );
           }
           alert("インポートが完了しました。");
-          // ループ終了後に一度だけ最新データを再読み込み
           await loadMonthlyData(); 
         } catch (err) {
           console.error(err);

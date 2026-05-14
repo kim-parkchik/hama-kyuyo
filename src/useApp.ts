@@ -6,8 +6,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import Database from "@tauri-apps/plugin-sql";
 import { useEffect, useState } from "react";
 import { DB_SCHEMAS } from "./types/dbSchema";
-import { PENSION_RATE, HOLIDAY_CSV_URL_DEFAULT } from "./constants/salaryMaster2026";
-import { APP_DIR_NAME, BACKUP_DIR_NAME, EXT_MAIN, EXT_BACKUP, APP_PROJECT_NAME } from "./constants/appConfig";
+import * as Master from './constants';
+import { APP_DIR_NAME, BACKUP_DIR_NAME, EXT_MAIN, EXT_BACKUP, APP_PROJECT_NAME, HOLIDAY_CSV_URL_DEFAULT } from "./constants/appConfig";
 import * as S from "./App.styles";
 import { writeLog } from "./utils/logUtils";
 
@@ -102,7 +102,7 @@ export const useApp = () => {
         await sqlite.execute(
           `INSERT INTO social_insurance_groups (id, name, type, is_fixed, pension_rate, is_active) 
           VALUES (1, '全国健康保険協会（協会けんぽ）', 'kyokai', 0, ?, 1)`,
-          [PENSION_RATE[1]] // インデックス1（18.30）を直接渡す
+          [Master.PENSION_RATE[1]] // インデックス1（18.30）を直接渡す
         );
       }
       // 🆕 賞与項目マスターの初期投入

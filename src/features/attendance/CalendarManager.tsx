@@ -3,8 +3,10 @@ import Database from "@tauri-apps/plugin-sql";
 import { fetch } from "@tauri-apps/plugin-http";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { Pencil, Trash2, Check, X, Plus, RotateCw, FileUp, AlertTriangle } from 'lucide-react';
-import { HOLIDAY_CSV_URL_DEFAULT } from "../../constants/salaryMaster2026";
+import { Pencil, Trash2, Check, CheckCircle2, X, Plus, RotateCw, FileUp, AlertTriangle } from 'lucide-react';
+import dayjs from 'dayjs';
+// import { HOLIDAY_CSV_URL_DEFAULT } from "../../constants/appConfig";
+import { S } from "./CalendarManager.styles";
 
 interface CalendarManagerProps {
   db: Database;
@@ -17,9 +19,11 @@ interface CalendarPattern {
   is_invalid: number;
 }
 
+const currentYear = dayjs().year();
+
 const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
-  const [csvUrl, setCsvUrl] = useState("");
-  const [year, setYear] = useState(2026);
+  // const [csvUrl, setCsvUrl] = useState("");
+  const [year, setYear] = useState(currentYear);
   const [loading, setLoading] = useState(false);
   const [holidays, setHolidays] = useState<Record<string, string>>({});
   const [companyHolidays, setCompanyHolidays] = useState<Record<string, number>>({});
@@ -73,14 +77,14 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
   useEffect(() => {
     const init = async () => {
       try {
-        // 🆕 holiday_source も select 対象に追加
+        // holiday_source も select 対象に追加
         const res = await db.select<any[]>("SELECT holiday_csv_url, week_start_day, holiday_source FROM company WHERE id = 1");
         
         if (res && res.length > 0) {
           const urlFromDb = res[0].holiday_csv_url;
           
           if (urlFromDb) {
-            setCsvUrl(urlFromDb);
+            // setCsvUrl(urlFromDb);
             setFixedCsvUrl(urlFromDb);
           }
           
@@ -114,12 +118,16 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
 
   const getDaysInYear = () => {
     const days = [];
-    for (let m = 0; m < 12; m++) {
-      const date = new Date(year, m, 1);
-      while (date.getMonth() === m) {
-        days.push(new Date(date));
-        date.setDate(date.getDate() + 1);
-      }
+    // その年の1月1日 00:00:00 から開始
+    let current = dayjs().year(year).startOf('year');
+    // その年の12月31日の終わりまで
+    const end = dayjs().year(year).endOf('year');
+
+    while (current.isBefore(end) || current.isSame(end)) {
+      // 既存のロジックが Date型を期待している場合は .toDate()
+      // もし以降の処理も dayjs で統一できるなら current そのままでもOK
+      days.push(current.toDate()); 
+      current = current.add(1, 'day');
     }
     return days;
   };
@@ -177,12 +185,12 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
 
   // 3. 日付の切り替え（反転ロジックへ修正）
   const toggleDay = async (dateKey: string) => {
-    const d = new Date(dateKey);
-    const isSunOrSat = d.getDay() === 0 || d.getDay() === 6;
+    const d = dayjs(dateKey);
+    const isSunOrSat = d.day() === 0 || d.day() === 6; // 0:日, 6:土
     const isHolidayMaster = holidays[dateKey] !== undefined;
     const isDefaultHoliday = isSunOrSat || isHolidayMaster;
     
-    const currentStatus = companyHolidays[dateKey]; // DB上の現在の値 (0 or 1 or undefined)
+    const currentStatus = companyHolidays[dateKey]; // DB上の現在の値 (0:出勤, 1:休日, undefined:デフォルト)
 
     let newStatus: number;
 
@@ -265,9 +273,13 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
     try {
       const res = await db.select("SELECT holiday_source, holiday_csv_url FROM company WHERE id = 1") as any[];
       const source = res[0]?.holiday_source || "url";
-      const targetUrl = res[0]?.holiday_csv_url || fixedCsvUrl || HOLIDAY_CSV_URL_DEFAULT;
+      const targetUrl = res[0]?.holiday_csv_url || fixedCsvUrl;
 
       if (source === "url") {
+        if (!targetUrl) {
+          alert("祝日取得用のURLが設定されていません。");
+          return;
+        }
         // --- オンライン取得モード ---
         const response = await fetch(targetUrl, { method: "GET" });
         const buffer = await response.arrayBuffer();
@@ -304,13 +316,10 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
   };
 
   const getDaysInMonth = (y: number, m: number) => {
-    const date = new Date(y, m, 1);
-    const days = [];
-    while (date.getMonth() === m) {
-      days.push(new Date(date));
-      date.setDate(date.getDate() + 1);
-    }
-    return days;
+    const startOfMonth = dayjs().year(y).month(m).startOf('month');
+    const daysCount = startOfMonth.daysInMonth();
+    
+    return Array.from({ length: daysCount }, (_, i) => startOfMonth.add(i, 'day').toDate());
   };
 
   // --- 新規パターンの保存処理 ---
@@ -369,34 +378,43 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
   };
 
   return (
-    <div style={{ padding: "20px", color: "#2c3e50" }}>
+    <div style={S.container}>
       {/* 1. ヘッダー：年選択と祝日取得ボタンのみ */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "25px" }}>
+      <div style={S.header}>
         {/* 左側：年選択 */}
         <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
-          <div style={{ 
-            display: "flex", alignItems: "center", gap: "10px", 
-            backgroundColor: "#fff", padding: "5px 15px", borderRadius: "8px", 
-            border: "1px solid #e2e8f0", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" 
-          }}>
-            <button onClick={() => setYear(year - 1)} style={navBtnStyle}>◀</button>
-            <span style={{ fontWeight: "bold", fontSize: "1.2rem", width: "70px", textAlign: "center" }}>{year}年</span>
-            <button onClick={() => setYear(year + 1)} style={navBtnStyle}>▶</button>
+          <div style={S.yearSelector}>
+            {/* 前年ボタン（必要に応じて過去の制限もかけられます） */}
+            <button 
+              onClick={() => setYear(year - 1)} 
+              style={S.navBtn}
+            >
+              ◀
+            </button>
+
+            <span style={{ fontWeight: "bold", fontSize: "1.2rem", width: "70px", textAlign: "center" }}>
+              {year}年
+            </span>
+
+            {/* 翌年ボタン：現在の年 + 1 を超えないように制限 */}
+            <button 
+              onClick={() => setYear(year + 1)} 
+              disabled={year >= currentYear + 1}
+              style={{
+                ...S.navBtn,
+                cursor: year >= currentYear + 1 ? 'not-allowed' : 'pointer',
+                opacity: year >= currentYear + 1 ? 0.5 : 1
+              }}
+            >
+              ▶
+            </button>
           </div>
         </div>
 
         {/* 右側：設定（ファイルモード時のみ）と実行ボタンをまとめるグループ */}
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           {holidaySource === "file" && (
-            <label style={{ 
-              display: "flex", 
-              alignItems: "center", 
-              gap: "6px", 
-              fontSize: "0.85rem", 
-              cursor: "pointer", 
-              color: "#64748b",
-              userSelect: "none" // テキスト選択を防いでボタン感を出す
-            }}>
+            <label style={S.csvHeaderLabel}>
               <input 
                 type="checkbox" 
                 checked={hasHeader} 
@@ -407,16 +425,7 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
             </label>
           )}
 
-          <button 
-            onClick={handleFetchHolidays}
-            disabled={loading}
-            style={{
-              display: "flex", alignItems: "center", gap: "8px",
-              backgroundColor: holidaySource === 'url' ? "#3498db" : "#2ecc71",
-              color: "white", border: "none", padding: "10px 20px", borderRadius: "8px",
-              cursor: "pointer", fontWeight: "bold", transition: "opacity 0.2s"
-            }}
-          >
+          <button onClick={handleFetchHolidays} disabled={loading} style={S.fetchBtn(holidaySource)}>
             {loading ? <RotateCw size={18} className="animate-spin" /> : (holidaySource === 'url' ? <RotateCw size={18} /> : <FileUp size={18} />)}
             {holidaySource === 'url' ? "最新の祝日を取得" : "祝日CSVを読み込む"}
           </button>
@@ -424,7 +433,7 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
       </div>
 
       {/* 2. パターン管理 & 統計エリア */}
-      <div style={patternContainerStyle}>
+      <div style={S.patternContainer}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px", flex: 1 }}>
           <span style={{ fontSize: "0.85rem", fontWeight: "bold", color: "#94a3b8" }}>カレンダー形式:</span>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
@@ -434,8 +443,8 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
 
               if (isSelected && isEditing) {
                 return (
-                  <div key={p.id} style={editInputWrapper}>
-                    <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleUpdateName()} style={editInput} />
+                  <div key={p.id} style={S.editInputWrapper}>
+                    <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleUpdateName()} style={S.editInput} />
                     <Check size={16} onClick={handleUpdateName} style={{ color: "#2ecc71", cursor: "pointer" }} />
                     <X size={16} onClick={() => setIsEditing(false)} style={{ color: "#94a3b8", cursor: "pointer" }} />
                   </div>
@@ -446,155 +455,132 @@ const CalendarManager: React.FC<CalendarManagerProps> = ({ db }) => {
                 <div key={p.id} style={{ display: "flex", alignItems: "center" }}>
                   <button
                     onClick={() => { setCurrentPatternId(p.id); setIsEditing(false); }}
-                    style={patternBtnStyle(isSelected, isError)}
+                    style={S.patternBtn(isSelected, isError)}
                   >
                     {isError && <AlertTriangle size={14} style={{ marginRight: "4px" }} />}
                     {p.name}
                   </button>
                   {isSelected && (
-                    <div style={actionBtnGroup}>
-                      <button onClick={() => { setEditName(p.name); setIsEditing(true); }} style={iconBtn}><Pencil size={14} /></button>
+                    <div style={S.actionBtnGroup}>
+                      <button onClick={() => { setEditName(p.name); setIsEditing(true); }} style={S.iconBtn}><Pencil size={14} /></button>
                       {p.id !== 1 && (
-                        <button onClick={handleDeletePattern} style={{ ...iconBtn, color: "#e74c3c" }}><Trash2 size={14} /></button>
+                        <button onClick={handleDeletePattern} style={{ ...S.iconBtn, color: "#e74c3c" }}><Trash2 size={14} /></button>
                       )}
                     </div>
                   )}
                 </div>
               );
             })}
-            {/* 🆕 追加ボタンと入力欄の切り替えロジック */}
+            {/* 追加ボタンと入力欄の切り替えロジック */}
             {isAddingPattern ? (
-              <div style={editInputWrapper}>
+              <div style={S.editInputWrapper}>
                 <input 
                   autoFocus 
                   value={newPatternName} 
                   onChange={(e) => setNewPatternName(e.target.value)} 
                   onKeyDown={(e) => e.key === 'Enter' && handleSavePattern()} 
                   placeholder="名称入力..." 
-                  style={editInput} 
+                  style={S.editInput} 
                 />
                 <Check size={16} onClick={handleSavePattern} style={{ color: "#2ecc71", cursor: "pointer" }} />
                 <X size={16} onClick={() => { setIsAddingPattern(false); setNewPatternName(""); }} style={{ color: "#e74c3c", cursor: "pointer" }} />
               </div>
             ) : (
-              <button onClick={() => setIsAddingPattern(true)} style={addBtnStyle}>
+              <button onClick={() => setIsAddingPattern(true)} style={S.addBtn}>
                 <Plus size={14} /> 追加
               </button>
             )}
           </div>
         </div>
 
-        <div style={statsWrapper}>
-          {/* 🆕 労務アラートの追加 */}
-          <div style={{ 
-            fontSize: "0.8rem", 
-            padding: "4px 10px", 
-            borderRadius: "4px", 
-            backgroundColor: isLawful ? "#e8f8f5" : "#fdedec", 
-            color: isLawful ? "#27ae60" : "#e74c3c",
-            fontWeight: "bold",
-            border: `1px solid ${isLawful ? "#27ae60" : "#e74c3c"}`
-          }}>
-            {isLawful ? "✅ 法定休日遵守" : `⚠️ 休日不足 (${invalidWeeks.length}箇所)`}
+        <div style={S.statsWrapper}>
+          {/* 労務アラートの追加 */}
+          <div style={S.lawfulBadge(isLawful)}>
+            {isLawful ? (
+              <>
+                <CheckCircle2 size={14} />
+                法定休日遵守
+              </>
+            ) : (
+              <>
+                <AlertTriangle size={14} />
+                休日不足 ({invalidWeeks.length}箇所)
+              </>
+            )}
           </div>
-
           <div style={{ fontSize: "0.85rem", color: "#7f8c8d" }}>稼働日数: <span style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#2c3e50" }}>{stats.workDays}</span> 日</div>
           <div style={{ fontSize: "0.85rem", color: "#7f8c8d" }}>休日数: <span style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#e74c3c" }}>{stats.holidayDays}</span> 日</div>
         </div>
       </div>
 
       {/* 3. カレンダーグリッド */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
-        {Array.from({ length: 12 }, (_, m) => (
-          <div key={m} style={{ backgroundColor: "#fff", padding: "8px", borderRadius: "8px", border: "1px solid #eee" }}>
-            <div style={{ textAlign: "center", fontWeight: "bold", marginBottom: "8px", borderBottom: "1px solid #f8f9fa" }}>{m + 1}月</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "1px" }}>
-              {Array.from({ length: new Date(year, m, 1).getDay() }).map((_, i) => <div key={`e-${i}`} />)}
-              {getDaysInMonth(year, m).map((d) => {
-                const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                
-                const hName = holidays[dateKey];
-                const setting = companyHolidays[dateKey];
+      <div style={S.gridContainer}>
+        {Array.from({ length: 12 }, (_, m) => {
+          // 月の初日を dayjs で取得
+          const firstDayOfMonth = dayjs().year(year).month(m).startOf('month');
+          // カレンダーの開始位置（空セルの数）を計算
+          const emptyCells = firstDayOfMonth.day();
 
-                const isSun = d.getDay() === 0;
-                const isSat = d.getDay() === 6;
+          return (
+            <div key={m} style={S.monthCard}>
+              <div style={S.monthTitle}>{m + 1}月</div>
+              <div style={S.daysGrid}>
+                {/* 月初までの空セル */}
+                {Array.from({ length: emptyCells }).map((_, i) => (
+                  <div key={`e-${i}`} />
+                ))}
 
-                // ✅ ① デフォルト休日（土日＋祝日）
-                const isHolidayMaster = !!hName;
-                const isDefaultHoliday = isSun || isSat || isHolidayMaster;
+                {/* 日付セル */}
+                {getDaysInMonth(year, m).map((dateObj) => {
+                  const d = dayjs(dateObj);
+                  const dateKey = d.format("YYYY-MM-DD"); // ✨ これだけで "2026-01-01" 形式になる
+                  
+                  const hName = holidays[dateKey];
+                  const setting = companyHolidays[dateKey];
 
-                // ✅ ② 最終判定（DB優先）
-                const isFinallyHoliday =
-                  setting !== undefined ? setting === 1 : isDefaultHoliday;
+                  const isSun = d.day() === 0;
+                  const isSat = d.day() === 6;
 
-                // ✅ ③ 文字色（←ここは絶対にDBを見ない）
-                let textColor = "#2c3e50"; // 平日（黒）
+                  // ✅ ① デフォルト休日（土日＋祝日）
+                  const isHolidayMaster = !!hName;
+                  const isDefaultHoliday = isSun || isSat || isHolidayMaster;
 
-                if (isSun || isHolidayMaster) textColor = "#e74c3c"; // 日曜・祝日（赤）
-                else if (isSat) textColor = "#3498db"; // 土曜（青）
+                  // ✅ ② 最終判定（DB優先）
+                  const isFinallyHoliday =
+                    setting !== undefined ? setting === 1 : isDefaultHoliday;
 
-                // ✅ ④ 枠線（ユーザー操作の可視化）
-                const borderStyle =
-                  setting === 0
-                    ? "1px solid #bdc3c7" // 強制出勤（グレー）
-                    : isFinallyHoliday
-                      ? "1px solid #e74c3c" // 休日（赤枠）
-                      : "1px solid transparent";
+                  // ✅ ③ 文字色
+                  let textColor = "#2c3e50"; 
+                  if (isSun || isHolidayMaster) textColor = "#e74c3c"; 
+                  else if (isSat) textColor = "#3498db"; 
 
-                // ✅ ⑤ カスタムされたか
-                const isCustomized = setting !== undefined;
+                  // ✅ ④ 枠線
+                  const borderStyle =
+                    setting === 0
+                      ? "1px solid #bdc3c7"
+                      : isFinallyHoliday
+                        ? "1px solid #e74c3c"
+                        : "1px solid transparent";
 
-                return (
-                  <div 
-                    key={d.toISOString()} 
-                    onClick={() => toggleDay(dateKey)}
-                    style={{ 
-                      textAlign: "center",
-                      padding: "4px 0",
-                      borderRadius: "4px",
-                      fontSize: "0.75rem",
-                      cursor: "pointer",
+                  const isCustomized = setting !== undefined;
 
-                      color: textColor,
-
-                      // ✅ 背景
-                      backgroundColor: isFinallyHoliday ? "#fadbd8" : "transparent",
-
-                      // ✅ 枠線
-                      border: borderStyle,
-
-                      fontWeight: hName ? "bold" : "normal",
-
-                      boxShadow: isCustomized ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
-                      transition: "all 0.1s ease"
-                    }}
-                  >
-                    {d.getDate()}
-                  </div>
-                );
-              })}
+                  return (
+                    <div 
+                      key={dateKey} 
+                      onClick={() => toggleDay(dateKey)}
+                      style={S.dayCell(isFinallyHoliday, textColor, borderStyle, isCustomized, isHolidayMaster)}
+                    >
+                      {d.date()}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 };
-
-// --- Styles ---
-const navBtnStyle = { border: "none", background: "none", cursor: "pointer", fontSize: "1rem", color: "#3498db", padding: "5px" };
-const patternContainerStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", padding: "15px 20px", backgroundColor: "#fff", borderRadius: "12px", borderLeft: "5px solid #3498db", boxShadow: "0 2px 10px rgba(0,0,0,0.05)" };
-const patternBtnStyle = (isSelected: boolean, isError: boolean) => ({
-  display: "flex", alignItems: "center", padding: "6px 16px", borderRadius: isSelected ? "8px 0 0 8px" : "8px",
-  border: "1px solid", borderColor: isSelected ? "#3498db" : "#e2e8f0",
-  backgroundColor: isSelected ? "#3498db" : "white", color: isSelected ? "white" : "#64748b",
-  cursor: "pointer", fontSize: "0.85rem", fontWeight: "bold" as const, transition: "all 0.2s"
-});
-const actionBtnGroup = { display: "flex", border: "1px solid #3498db", borderLeft: "none", borderRadius: "0 8px 8px 0", overflow: "hidden", backgroundColor: "white" };
-const iconBtn = { padding: "6px 10px", border: "none", background: "none", cursor: "pointer", display: "flex", alignItems: "center", borderRight: "1px solid #f0f0f0" };
-const addBtnStyle = { display: "flex", alignItems: "center", gap: "4px", padding: "6px 14px", borderRadius: "8px", border: "1px dashed #cbd5e1", backgroundColor: "transparent", color: "#64748b", cursor: "pointer", fontSize: "0.85rem" };
-const editInputWrapper = { display: "flex", gap: "8px", alignItems: "center", backgroundColor: "#fff", padding: "4px 10px", borderRadius: "8px", border: "1px solid #3498db" };
-const editInput = { border: "none", outline: "none", fontSize: "0.85rem", width: "100px" };
-const statsWrapper = { display: "flex", gap: "25px", paddingLeft: "25px", borderLeft: "1px solid #eee", alignItems: "center" };
 
 export default CalendarManager;

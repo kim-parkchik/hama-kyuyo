@@ -15,7 +15,7 @@ import {
   getNightMinutesInPeriod, 
   getWeekKey
 } from './timeUtils';
-import * as Master from '../constants/salaryMaster2026';
+import * as Master from '../constants';
 
 // プラグインの有効化
 dayjs.extend(isSameOrAfter);
@@ -222,7 +222,14 @@ export const calculateSalary = (
   const scheduledHours = Number(staff.scheduled_work_hours) || 8;
 
   // ── 勤怠集計 ──────────────────────────────────────────────
-  const workDays = attendanceData.length;
+  // ── 1. まず、確定データの中から「欠勤」と「全休」の日数を正確に把握する ──
+  // これにより、workDays(出勤日) と absentDays(欠勤日) を明確に分けます
+  const actualAbsentDays = attendanceData.filter(row => row.work_type === 'absent').length;
+  const paidFullDays = attendanceData.filter(row => row.work_type === 'paid_full').length;
+  
+  // 出勤日数は、欠勤と全休（有給）を除いた純粋な稼働日とする
+  const workDays = attendanceData.length - actualAbsentDays - paidFullDays;
+  // const workDays = attendanceData.length;
   let totalWorkHours = 0, totalNightHours = 0;
   let basePay = 0, standardOvertimePay = 0, highOvertimePay = 0, nightPay = 0;
   let statutoryOvertimePay = 0; // 法定内残業代（割増なし）
@@ -247,7 +254,9 @@ export const calculateSalary = (
   }
 
   if (staff.wage_type === 'monthly') {
-    const monthlyWage = Number(staff.base_wage) || 0;
+    // DBの「base_wage」と JSの「baseWage」の両方に対応させる
+    const rawWage = staff.base_wage ?? staff.baseWage ?? 0;
+    const monthlyWage = Number(rawWage);
     basePay = monthlyWage;
 
     const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
@@ -256,15 +265,19 @@ export const calculateSalary = (
       const dow = new Date(targetYear, targetMonth - 1, d).getDay();
       if (dow === 0 || dow === 6) weekends++;
     }
+    
+    // 所定労働日数の確定
     const prescribedDays = Number(staff.monthly_work_days) || (daysInMonth - weekends);
+    
+    // 時給単価の計算（残業代などのベース）
     const hourlyRate = (prescribedDays > 0 && scheduledHours > 0)
       ? monthlyWage / (prescribedDays * scheduledHours)
       : 0;
 
-    // 欠勤控除
-    const absentDays = Math.max(0, prescribedDays - workDays);
-    absenceDeduction = absentDays > 0
-      ? Math.floor((monthlyWage / prescribedDays) * absentDays)
+    // ── 【ここを修正】 欠勤控除 ──
+    // 先ほど算出した actualAbsentDays を使ってダイレクトに計算
+    absenceDeduction = actualAbsentDays > 0
+      ? Math.floor((monthlyWage / prescribedDays) * actualAbsentDays)
       : 0;
 
     // 週40h超の残業時間を日付→週のマップで追跡
@@ -396,17 +409,30 @@ export const calculateSalary = (
   const customDeductions = customItems.filter(i => i.type === 'deduction').reduce((s, i) => s + i.amount, 0);
 
   // ── 支給合計 ──────────────────────────────────────────────
-  const premiums = standardOvertimePay + highOvertimePay + nightPay;
+  // const premiums = standardOvertimePay + highOvertimePay + nightPay;
+  // const roundedPremiums = applyRounding(premiums, companySettings?.round_overtime || 'round');
+  // const roundedStatutory = applyRounding(statutoryOvertimePay, companySettings?.round_overtime || 'round');
+  const premiums = (standardOvertimePay || 0) + (highOvertimePay || 0) + (nightPay || 0);
   const roundedPremiums = applyRounding(premiums, companySettings?.round_overtime || 'round');
-  const roundedStatutory = applyRounding(statutoryOvertimePay, companySettings?.round_overtime || 'round');
+  const roundedStatutory = applyRounding(statutoryOvertimePay || 0, companySettings?.round_overtime || 'round');
 
-  const totalEarnings = Math.floor(basePay)
-                      - absenceDeduction
-                      + roundedStatutory   // 法定内残業代
-                      + roundedPremiums    // 法定外割増
-                      + commutePay
-                      + allowanceAmount
-                      + customEarnings;
+  // const totalEarnings = Math.floor(basePay)
+  //                     - absenceDeduction
+  //                     + roundedStatutory   // 法定内残業代
+  //                     + roundedPremiums    // 法定外割増
+  //                     + commutePay
+  //                     + allowanceAmount
+  //                     + customEarnings;
+
+  const totalEarnings = Math.floor(basePay || 0)
+                    - (absenceDeduction || 0)
+                    + (roundedStatutory || 0)
+                    + (roundedPremiums || 0)
+                    + (commutePay || 0)
+                    + (allowanceAmount || 0)
+                    + (customEarnings || 0);
+  // 念のためログを出して確認
+  console.log("CHECK totalEarnings:", totalEarnings);
 
   // ── 社会保険料 ──────────────────────────────────────────────
   // 1. 標準報酬月額の確定

@@ -2,6 +2,8 @@
  * アプリケーション全体のシステム設定
  */
 
+export const DEFAULT_BASE_DATE = '2026-01-01';
+
 /** ドキュメントフォルダ内に作成するメインディレクトリ名 */
 export const APP_DIR_NAME = "Q";
 
@@ -21,3 +23,14 @@ export const EXT_LOG = "qlog";
 
 /** ダイアログ表示用のフィルタ名 */
 export const APP_PROJECT_NAME = "Q Payroll File";
+
+/** --- 業務ロジックに関する定数 --- */
+
+/** 
+ * システムがサポートする最小年 (2026年1月〜)
+ * これ以前のデータは作成・計算の対象外とする
+ */
+export const SYSTEM_MIN_YEAR = 2026;
+
+// 祝日データ取得用（内閣府提供のCSV）
+export const HOLIDAY_CSV_URL_DEFAULT = "https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv";

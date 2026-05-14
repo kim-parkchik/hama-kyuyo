@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
-import { UserCheck, Shield, Timer, XCircle, Car, TrainFront, Clock, Calendar, Banknote } from 'lucide-react';
+import { UserCheck, Shield, Timer, XCircle, Car, TrainFront, Clock, Calendar, Banknote, Search, Loader2 } from 'lucide-react';
 import { modernIconBtnStyle } from "../../styles/styles";
 import { fetchAddressByZip } from "../../utils/addressUtils";
-import * as Master from '../../constants/salaryMaster2026';
+import * as Master from '../../constants';
 
 // 選択肢用の定数を作成
 export const HYOJUN_OPTIONS = Master.HYOJUN_TABLE.map(([lo, hi, std], index) => {
@@ -637,30 +637,70 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                                 </div>
                             </div>
 
-                            {/* 🆕 郵便番号セクションをグループ化 */}
-                            <div>
+                            {/* 郵便番号セクションをグループ化 */}
+                            <div style={{ width: "50%" }}> {/* 幅を半分に制限 */}
                                 <label style={labelStyle}>郵便番号</label>
-                                <div style={{ display: "flex", boxShadow: "0 1px 2px rgba(0,0,0,0.05)", borderRadius: "6px", overflow: "hidden", marginTop: "4px" }}>
+                                <div 
+                                    className="zip-container" // CSSで光らせるためのクラス（後述）
+                                    style={{ 
+                                        display: "flex", 
+                                        boxShadow: "0 1px 2px rgba(0,0,0,0.05)", 
+                                        borderRadius: "6px", 
+                                        marginTop: "4px",
+                                        height: "38px",
+                                        border: "1px solid #ddd", // 枠線を親に持たせる
+                                        overflow: "hidden",
+                                        transition: "all 0.2s", // アニメーション
+                                    }}
+                                >
                                     <input 
                                         placeholder="000-0000" 
                                         value={targetZip} 
                                         onChange={e => setTargetZip(e.target.value)} 
-                                        style={{ ...inputStyle, borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none", flex: 1 }} 
+                                        onFocus={(e) => e.currentTarget.parentElement!.style.borderColor = "#3498db"} // フォーカスで青く
+                                        onBlur={(e) => e.currentTarget.parentElement!.style.borderColor = "#ddd"}    // 外れたら戻す
+                                        style={{ 
+                                            ...inputStyle, 
+                                            height: "100%", 
+                                            border: "none", // 中の枠線は消す
+                                            outline: "none", // ブラウザ標準の青枠を消す（親が光るため）
+                                            flex: 1,
+                                            marginTop: 0,
+                                            padding: "0 12px"
+                                        }} 
                                     />
                                     <button 
                                         onClick={handleZipSearch}
                                         disabled={isSearchingZip}
                                         style={{ 
-                                            padding: "0 15px", backgroundColor: "#f8fafc", border: "1px solid #ddd", 
-                                            cursor: "pointer", fontSize: "12px", color: "#3498db", fontWeight: "bold", whiteSpace: "nowrap" 
+                                            display: "inline-flex",
+                                            alignItems: "center",
+                                            justifyContent: "center",
+                                            gap: "6px",
+                                            padding: "0 15px", 
+                                            height: "100%",
+                                            backgroundColor: "#f8fafc", 
+                                            border: "none", // 枠線は親が持っているので不要
+                                            borderLeft: "1px solid #ddd", // 入力欄との境界線だけ残す
+                                            cursor: isSearchingZip ? "not-allowed" : "pointer", 
+                                            fontSize: "12px", 
+                                            color: "#3498db", 
+                                            fontWeight: "bold", 
+                                            whiteSpace: "nowrap",
+                                            transition: "all 0.2s"
                                         }}
                                     >
-                                        {isSearchingZip ? "⌛" : "🔍 住所検索"}
+                                        {isSearchingZip ? (
+                                            <Loader2 size={14} className="animate-spin" />
+                                        ) : (
+                                            <Search size={14} />
+                                        )}
+                                        <span>住所検索</span>
                                     </button>
                                 </div>
                             </div>
 
-                            {/* 🆕 住所セクションをグループ化 */}
+                            {/* 住所セクションをグループ化 */}
                             <div>
                                 <label style={labelStyle}>住所</label>
                                 <textarea 
@@ -699,7 +739,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                             <div style={{ marginTop: "10px" }}>
                                 <h4 style={{ borderLeft: "4px solid #9b59b6", paddingLeft: "10px", margin: "0 0 10px 0", fontSize: "14px" }}>税・社会保険・労働保険</h4>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                                    {/* --- 🆕 3大フラグ・スイッチ群 --- */}
+                                    {/* --- 3大フラグ・スイッチ群 --- */}
                                     <div style={{ gridColumn: "span 2", display: "flex", gap: "15px", backgroundColor: "#f8fafc", padding: "10px", borderRadius: "5px", border: "1px solid #e2e8f0" }}>
                                         <label style={{ fontSize: "12px", display: "flex", alignItems: "center", cursor: "pointer", gap: "6px" }}>
                                             <input 
@@ -884,7 +924,7 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
 
                         <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                             <h4 style={{ borderLeft: "4px solid #e67e22", paddingLeft: "10px", margin: "0 0 5px 0", fontSize: "14px" }}>所属・給与</h4>
-                            {/* 🆕 状態と所属を横並び ＆ 両方ともラベル横配置 */}
+                            {/* 状態と所属を横並び ＆ 両方ともラベル横配置 */}
                             
                             <div style={{ display: "flex", gap: "15px" }}>
                             
@@ -1553,20 +1593,42 @@ export default function StaffManager({ db, onDataChange, staffList }: Props) {
                         boxSizing: "border-box"
                     }}>
                         {/* 左側：キーワード検索（ここを幅広く持たせる） */}
-                        <div style={{ flex: "1" }}> {/* flex: 1 にして可能な限り広げる */}
+                        <div style={{ flex: "1", position: "relative" }}> {/* position: relative を追加 */}
+                            {/* 検索アイコンを配置 */}
+                            <Search 
+                                size={16} 
+                                style={{ 
+                                    position: "absolute", 
+                                    left: "10px", 
+                                    top: "50%", 
+                                    transform: "translateY(-50%)", 
+                                    color: "#94a3b8", 
+                                    pointerEvents: "none" 
+                                }} 
+                            />
                             <input 
-                                placeholder="🔍 ID、名前、フリガナ、役割などで検索..." 
+                                placeholder="ID、名前、フリガナ、役割などで検索..." 
                                 value={searchKeyword}
                                 onChange={e => setSearchKeyword(e.target.value)}
+                                onFocus={(e) => {
+                                    e.currentTarget.style.borderColor = "#3498db";
+                                    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(52, 152, 219, 0.2)";
+                                }}
+                                onBlur={(e) => {
+                                    e.currentTarget.style.borderColor = "#cbd5e1";
+                                    e.currentTarget.style.boxShadow = "none";
+                                }}
                                 style={{ 
                                     width: "100%",
                                     fontSize: "14px",
-                                    padding: "0 12px",
+                                    padding: "0 12px 0 32px", // 左側にアイコン分の余白(32px)を確保
                                     height: "36px", 
                                     borderRadius: "6px",
                                     border: "1px solid #cbd5e1",
                                     boxSizing: "border-box",
-                                    backgroundColor: "white"
+                                    backgroundColor: "white",
+                                    outline: "none", // デフォルトの黒枠を消す
+                                    transition: "all 0.2s ease-in-out" // 変化を滑らかに
                                 }}
                             />
                         </div>

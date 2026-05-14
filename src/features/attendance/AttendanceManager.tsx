@@ -24,14 +24,23 @@ dayjs.locale("ja");     // 日本語に設定
 import { formatHours } from "../../utils/timeUtils";
 import { modernIconBtnStyle } from "../../styles/styles";
 import { calcDetailedDiff } from "../../utils/calcSalary";
-import { OVERTIME_PREMIUM_LIMIT_HOURS, OVERTIME_PREMIUM_RATE } from '../../constants/salaryMaster2026';
-import * as S from './AttendanceManager.styles';
+import * as Master from '../../constants';
+import { S } from './AttendanceManager.styles';
 import { useAttendanceManager } from "./useAttendanceManager";
 
 
 // ニコイチ入力コンポーネント
-function TimeInputPair({ value, onChange, disabled }: { value: string, onChange: (val: string) => void, disabled?: boolean }) {
-  
+function TimeInputPair({ 
+  value, 
+  onChange, 
+  disabled, 
+  isFinalized // 🆕 確定によるロックかどうかを受け取る
+}: { 
+  value: string, 
+  onChange: (val: string) => void, 
+  disabled?: boolean,
+  isFinalized?: boolean 
+}) {
   const [initialH, initialM] = (value || ":").split(":");
   const [localH, setLocalH] = useState(initialH || "");
   const [localM, setLocalM] = useState(initialM || "");
@@ -43,12 +52,27 @@ function TimeInputPair({ value, onChange, disabled }: { value: string, onChange:
   }, [value]);
 
   const handleBlur = () => {
-    // 🆕 補完処理
+    // 1. 両方空なら、値を消去する（休憩なし等）
+    if (!localH && !localM) {
+      if (value !== ":") onChange(":");
+      return;
+    }
+
+    // 2. 片方だけ入力されている場合は、無理に補完せずそのままにする
+    // （ユーザーが入力途中で他の場所を触った可能性があるため）
+    if (!localH || !localM) {
+      onChange(`${localH}:${localM}`);
+      return;
+    }
+
+    // 3. 両方入力がある時だけ、綺麗に「0埋め」して桁を揃える
     const paddedH = localH.padStart(2, '0');
     const paddedM = localM.padStart(2, '0');
     const newValue = `${paddedH}:${paddedM}`;
 
     if (newValue !== value) {
+      setLocalH(paddedH); // 入力欄の中身も 09 に更新
+      setLocalM(paddedM);
       onChange(newValue);
     }
   };
@@ -60,37 +84,49 @@ function TimeInputPair({ value, onChange, disabled }: { value: string, onChange:
   };
 
   const inputStyle = {
-    width: "32px",
+    width: "28px",
     border: "none",
     outline: "none",
     textAlign: "center" as const,
     fontSize: "14px",
     fontFamily: "monospace",
-    // 🆕 disabled の時は背景色やカーソルを変える
     backgroundColor: "transparent",
     padding: "4px 0",
+    margin: "0",
+    lineHeight: "1.2",
     cursor: disabled ? "not-allowed" : "text",
-    color: disabled ? "#999" : "#333"
+    
+    // --- ここを修正：確定(disabled)時は緑、それ以外は通常色 ---
+    color: isFinalized 
+      ? "#27ae60"          // 確定時は「緑」
+      : (disabled ? "#bdc3c7" : "#333"), // 欠勤などで無効な時は「薄いグレー」、通常は「濃いグレー」
+    
+    fontWeight: isFinalized ? "bold" : "normal",
+    opacity: 1, 
+    WebkitTextFillColor: isFinalized 
+      ? "#27ae60" 
+      : (disabled ? "#bdc3c7" : "#333"),
   };
 
   return (
     <div style={{
       display: "inline-flex",
       alignItems: "center",
-      // 🆕 disabled の時は枠線の色や背景を変える
-      backgroundColor: disabled ? "#f5f5f5" : "#ffffff",
-      border: "1px solid #ddd",
+      justifyContent: "center",
+      backgroundColor: isFinalized ? "transparent" : (disabled ? "#f5f5f5" : "#ffffff"),
+      border: isFinalized ? "1px solid transparent" : "1px solid #ddd",
       borderRadius: "4px",
       padding: "0 2px",
       width: "60px",
-      boxShadow: "inset 0 1px 2px rgba(0,0,0,0.05)"
+      // 確定時はシャドウも不要なら消す
+      boxShadow: disabled ? "none" : "inset 0 1px 2px rgba(0,0,0,0.05)"
     }}>
       <input
         type="text"
         inputMode="numeric"
-        disabled={disabled} // 🆕 ここに disabled を適用
+        disabled={disabled}
         value={localH}
-        placeholder="00"
+        placeholder="--"
         onChange={e => {
           const cleaned = formatInput(e.target.value);
           setLocalH(cleaned);
@@ -99,13 +135,22 @@ function TimeInputPair({ value, onChange, disabled }: { value: string, onChange:
         onBlur={handleBlur}
         style={inputStyle}
       />
-      <span style={{ color: "#ccc", fontWeight: "bold", userSelect: "none" }}>:</span>
+      {/* コロンの色も確定時は緑に合わせると綺麗です */}
+      <span style={{ 
+        // ★ ここを修正：入力欄の文字色と同じロジックに
+        color: isFinalized 
+          ? "#27ae60"          // 確定時は「緑」
+          : (disabled ? "#bdc3c7" : "#ccc"), // 欠勤などで無効なら「薄いグレー」、通常は「薄い目印グレー」
+          
+        fontWeight: "bold", 
+        userSelect: "none" 
+      }}>:</span>
       <input
         type="text"
         inputMode="numeric"
-        disabled={disabled} // 🆕 ここに disabled を適用
+        disabled={disabled}
         value={localM}
-        placeholder="00"
+        placeholder="--"
         onChange={e => {
           const cleaned = formatInput(e.target.value);
           setLocalM(cleaned);
@@ -193,26 +238,26 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
   ];
 
   return (
-    <div style={S.containerStyle}>
+    <div style={S.container}>
       {/* 🆕 タブメニュー */}
-      <div style={S.tabContainerStyle}>
+      <div style={S.tabContainer}>
         <button 
           onClick={() => setActiveTab("individual")} 
-          style={S.tabButtonStyle(activeTab === "individual")}
+          style={S.tabButton(activeTab === "individual")}
         >
-          <User size={18} style={S.iconWrapperStyle} /> 個別編集・集計
+          <User size={18} style={S.iconWrapper} /> 個別編集・集計
         </button>
         <button 
           onClick={() => setActiveTab("csv")} 
-          style={S.tabButtonStyle(activeTab === "csv")}
+          style={S.tabButton(activeTab === "csv")}
         >
-          <FileBox size={18} style={S.iconWrapperStyle} /> 一括操作 (CSV)
+          <FileBox size={18} style={S.iconWrapper} /> 一括操作 (CSV)
         </button>
       </div>
 
       {/* --- 📂 一括操作 (CSV) タブの内容 --- */}
       {activeTab === "csv" && (
-        <div style={{ ...S.cardStyle, borderTop: "4px solid #7f8c8d" }}>
+        <div style={{ ...S.card, borderTop: "4px solid #7f8c8d" }}>
           <h3 style={{ marginTop: 0 }}>データの入出力</h3>
           <p style={{ fontSize: "13px", color: "#666" }}>
             勤怠データの書き出し、およびCSVファイルからの取り込みを行います。
@@ -221,7 +266,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
             
             {/* エクスポート側 */}
             <div style={{ flex: 1, padding: "15px", border: "1px solid #eee", borderRadius: "8px", backgroundColor: "#f9f9f9" }}>
-              <h4 style={{ marginTop: 0 }}><FileUp size={20} style={S.iconWrapperStyle} /> エクスポート設定</h4>
+              <h4 style={{ marginTop: 0 }}><FileUp size={20} style={S.iconWrapper} /> エクスポート設定</h4>
               
               {/* 🆕 期間指定フォーム */}
               <div style={{ marginBottom: "15px", padding: "10px", backgroundColor: "#fff", borderRadius: "6px", border: "1px solid #ddd" }}>
@@ -232,14 +277,14 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                   <input 
                     type="date" 
                     value={payrollPeriod?.startStr} 
-                    style={{ ...S.inputStyle, padding: "4px" }} 
+                    style={{ ...S.input, padding: "4px" }} 
                     onChange={(e) => {/* 必要に応じてカスタム期間用のstateを更新 */}}
                   />
                   <span>～</span>
                   <input 
                     type="date" 
                     value={payrollPeriod?.endStr} 
-                    style={{ ...S.inputStyle, padding: "4px" }} 
+                    style={{ ...S.input, padding: "4px" }} 
                   />
                 </div>
                 <p style={{ fontSize: "11px", color: "#e67e22", marginTop: "5px" }}>
@@ -249,22 +294,22 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
 
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 <button onClick={handleExportRawCSV} style={modernIconBtnStyle("#7f8c8d")}>
-                  <FileSpreadsheet size={16} style={S.iconWrapperStyle} /> 打刻ログ（Rawデータ）を出力
+                  <FileSpreadsheet size={16} style={S.iconWrapper} /> 打刻ログ（Rawデータ）を出力
                 </button>
                 <button onClick={handleExportFullCSV} style={modernIconBtnStyle("#34495e")}>
-                  <FileUp size={16} style={S.iconWrapperStyle} /> 確定フラグ付き詳細データを出力
+                  <FileUp size={16} style={S.iconWrapper} /> 確定フラグ付き詳細データを出力
                 </button>
               </div>
             </div>
 
             {/* インポート側 */}
             <div style={{ flex: 1, padding: "15px", border: "1px solid #eee", borderRadius: "8px" }}>
-              <h4 style={{ marginTop: 0 }}><FileDown size={20} style={S.iconWrapperStyle} /> インポート</h4>
+              <h4 style={{ marginTop: 0 }}><FileDown size={20} style={S.iconWrapper} /> インポート</h4>
               <p style={{ fontSize: "12px", color: "#888", marginBottom: "10px" }}>
                 ファイル内の日付に基づき、全期間のデータを一括で取り込みます。
               </p>
               <button onClick={handleImportCSV} style={{ ...modernIconBtnStyle("#2980b9"), width: "100%" }}>
-                <FileDown size={16} style={S.iconWrapperStyle} /> CSVファイルを読み込む
+                <FileDown size={16} style={S.iconWrapper} /> CSVファイルを読み込む
               </button>
               <p style={{ fontSize: "11px", color: "#d35400", marginTop: "10px", fontWeight: "bold" }}>
                 ※給与確定済みの期間は上書きされません。
@@ -278,7 +323,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
       {activeTab === "individual" && (
         <>
           {/* 年月選択エリア */}
-          <div style={{ ...S.dateControlAreaStyle, position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <div style={{ ...S.dateControlArea, position: "relative", display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             
             {/* 左側：支給月選択セレクトボックス */}
             <div style={{ display: "flex", alignItems: "flex-end", gap: "12px" }}>
@@ -288,14 +333,14 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                   <select 
                     value={targetYear} 
                     onChange={e => setTargetYear(Number(e.target.value))} 
-                    style={{ ...S.inputStyle, width: "100px", fontWeight: "bold" }}
+                    style={{ ...S.input, width: "100px", fontWeight: "bold" }}
                   >
                     {[2025, 2026, 2027, 2028].map(y => <option key={y} value={y}>{y}年</option>)}
                   </select>
                   <select 
                     value={targetMonth} 
                     onChange={e => setTargetMonth(Number(e.target.value))} 
-                    style={{ ...S.inputStyle, width: "110px", fontWeight: "bold", color: "#2c3e50" }}
+                    style={{ ...S.input, width: "110px", fontWeight: "bold", color: "#2c3e50" }}
                   >
                     {Array.from({ length: 12 }, (_, i) => (
                       <option key={i + 1} value={i + 1}>{i + 1}月支給分</option>
@@ -310,9 +355,9 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                   setTargetYear(now.year()); 
                   setTargetMonth(now.month() + 1); 
                 }} 
-                style={{ ...S.secondaryBtnStyle, height: "36px" }}
+                style={{ ...S.secondaryBtn, height: "36px" }}
               >
-                <Calendar size={16} style={S.iconWrapperStyle} />今月に戻る
+                <Calendar size={16} style={S.iconWrapper} />今月に戻る
               </button>
             </div>
 
@@ -347,16 +392,16 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
           </div>
 
           {/* 🆕 従業員選択・フィルタ・一括保存セクション */}
-          <section style={S.actionSectionStyle}>
+          <section style={S.actionSection}>
             {/* 左側：従業員選択カード（フィルタ機能付き） */}
-            <div style={S.staffSelectCardStyle}>
+            <div style={S.staffSelectCard}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 {/* 左側：従業員選択セレクトボックス（幅をさらに拡大） */}
                 <div style={{ width: "500px" }}> 
                   <select 
                     value={selectedStaffId} 
                     onChange={e => setSelectedStaffId(e.target.value)} 
-                    style={{ ...S.inputStyle, height: "32px", padding: "4px 10px" }}
+                    style={{ ...S.input, height: "32px", padding: "4px 10px" }}
                   >
                     <option value="">-- 従業員を選択してください --</option>
                     {filteredStaffList.map((s: Staff) => ( // ← ここに : Staff を追加
@@ -373,7 +418,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                     <button
                       key={opt.value}
                       onClick={() => toggleFilter(opt.value)}
-                      style={S.filterButtonStyle(activeFilters.includes(opt.value), opt.color)}
+                      style={S.filterButton(activeFilters.includes(opt.value), opt.color)}
                     >
                       {opt.label}
                     </button>
@@ -410,7 +455,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                     whiteSpace: "nowrap"
                   }}
                 >
-                  <FileStack size={18} style={{ ...S.iconWrapperStyle, marginRight: "0" }} /> 
+                  <FileStack size={18} style={{ ...S.iconWrapper, marginRight: "0" }} /> 
                   未保存分をすべて保存
                 </button>
               ) : (
@@ -422,7 +467,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
 
           {selectedStaffId ? (
             <>
-              <section style={{ ...S.cardStyle, position: "relative", minHeight: "200px" }}>
+              <section style={{ ...S.card, position: "relative", minHeight: "200px" }}>
                 {/* 🆕 読み込み中の「幕」：isLoadingがtrueの時だけ出現 */}
                 {isLoading && (
                   <div style={{
@@ -449,18 +494,18 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                 }}>
                   <thead>
                     <tr style={{ backgroundColor: "#fcfcfc", borderBottom: "2px solid #eee" }}>
-                      <th style={{ ...S.thStyle, width: "100px" }}>日付</th>
-                      <th style={S.thStyle}>出勤</th>
-                      <th style={{ ...S.thStyle, paddingRight: "20px" }}>退勤</th>
-                      <th style={S.thStyle}>休憩(始)</th>
-                      <th style={{ ...S.thStyle, paddingRight: "20px" }}>休憩(終)</th>
-                      <th style={S.thStyle}>外出</th>
-                      <th style={{ ...S.thStyle, paddingRight: "2px" }}>戻り</th>
+                      <th style={{ ...S.th, width: "100px" }}>日付</th>
+                      <th style={S.th}>出勤</th>
+                      <th style={{ ...S.th, paddingRight: "20px" }}>退勤</th>
+                      <th style={S.th}>休憩(始)</th>
+                      <th style={{ ...S.th, paddingRight: "20px" }}>休憩(終)</th>
+                      <th style={S.th}>外出</th>
+                      <th style={{ ...S.th, paddingRight: "2px" }}>戻り</th>
                       {/* 🆕 独立した時間有給列 */}
-                      <th style={{ ...S.thStyle, width: "60x", color: "#3498db" }}>時間有給</th>
+                      <th style={{ ...S.th, width: "60x", color: "#3498db" }}>時間有給</th>
                       
                       {/* 🆕 実働と操作を一つのエリアとして定義 */}
-                      <th style={{ ...S.thStyle, width: "130px", borderLeft: "1px solid #eee" }}>実働 / 確定</th>
+                      <th style={{ ...S.th, width: "130px", borderLeft: "1px solid #eee" }}>実働 / 確定</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -495,111 +540,202 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
 
                       // --- 2. 矛盾チェック（エラーメッセージ） ---
                       let timeErrorMsg = "";
-                      // if (isCompleteTime(row.in) && isCompleteTime(row.out)) {
-                      //   const start = toMinutes(row.in);
-                      //   const end = toMinutes(row.out);
-                      //   if (end <= start) {
-                      //     timeErrorMsg = "退勤が出勤より前です";
-                      //   } else {
-                      //     if (isCompleteTime(row.bStart) && isCompleteTime(row.bEnd)) {
-                      //       const bs = toMinutes(row.bStart), be = toMinutes(row.bEnd);
-                      //       if (be <= bs) timeErrorMsg = "休憩終了が不正です";
-                      //       else if (bs < start || be > end) timeErrorMsg = "休憩が勤務時間外です";
-                      //     }
-                      //     if (!timeErrorMsg && isCompleteTime(row.outTime) && isCompleteTime(row.returnTime)) {
-                      //       const os = toMinutes(row.outTime), or = toMinutes(row.returnTime);
-                      //       if (or <= os) timeErrorMsg = "戻りが外出より前です";
-                      //       else if (os < start || or > end) timeErrorMsg = "外出が勤務時間外です";
-                      //     }
-                      //   }
-                      // }
 
                       // --- 3. 背景色・文字色 ---
                       const hName = holidays[dateStr];
                       const cSetting = companyHolidays[dateStr];
                       const isRedDay = (cSetting === 1) || (cSetting === undefined && (dayOfWeek === "日" || !!hName));
                       const isBlueDay = dayOfWeek === "土" && !isRedDay;
-                      const rowBgColor = S.getRowBgColor(row.workType, isRedDay, isBlueDay);
-                      const dateTextColor = S.getDateTextColor(isRedDay, isBlueDay);
+                      const rowBgColor = S.rowBgColor(isRedDay, isBlueDay);
+                      const dateTextColor = S.dateTextColor(isRedDay, isBlueDay);
 
+                      // --- 1. 状態判定 ---
+                      const isAbsent = row.workType === "absent"; // 欠勤かどうか
 
+                      // --- 2. スタイル定義（動的に切り替え） ---
+                      const borderLeftStyle = isFinalized 
+                        ? "5px solid #2ecc71" 
+                        : "5px solid transparent";
 
-
+                      // スタンプの色
+                      const stampColor = isAbsent ? "#e74c3c" : "#2ecc71";
+                      const StampIcon = isAbsent ? AlertCircle : CheckCircle; // 欠勤時は警告アイコンにするのもアリ
 
                       return (
                         <Fragment key={dateStr}>
-                          <tr style={{ backgroundColor: rowBgColor, borderTop: "3px solid #eee" }}>
+                          <tr style={{ 
+                            backgroundColor: rowBgColor,
+                            borderTop: "3px solid #eee",
+                            borderLeft: borderLeftStyle,
+                            transition: "all 0.3s ease" 
+                          }}>
                             {/* --- 1. 日付・区分 (rowSpan=3) --- */}
-                            <td rowSpan={3} style={{ ...S.tdStyle, fontWeight: "bold", borderRight: "1px solid #eee", verticalAlign: "top", width: "100px" }}>
-                              <div style={{ fontSize: "14px", color: dateTextColor }}>
-                                <span style={{ fontSize: "10px", display: "block", color: "#95a5a6", fontWeight: "normal" }}>
-                                  {d.format('YYYY/MM')}
-                                </span>
-                                <span style={{ fontSize: "16px" }}>{day}</span>
-                                <span style={{ fontSize: "12px", marginLeft: "2px" }}>({dayOfWeek})</span>                           
-                                {hName && <span style={S.holidayBadgeStyle}>{hName}</span>}
+                            <td 
+                              rowSpan={3} 
+                              style={{ 
+                                ...S.td, 
+                                position: "relative",
+                                fontWeight: "bold", 
+                                borderRight: "1px solid #eee", 
+                                verticalAlign: "top", 
+                                width: "100px",
+                                overflow: "hidden",
+                                backgroundColor: rowBgColor
+                              }}
+                            >
+                              {/* --- 確定スタンプ (背景レイヤー) --- */}
+                              {isFinalized && (
+                                <div style={{
+                                  position: "absolute",
+                                  top: "40px",
+                                  left: "50%",
+                                  transform: "translateX(-50%) rotate(-15deg)",
+                                  color: stampColor, // ★ 動的に赤か緑に変わる
+                                  opacity: 0.12,
+                                  zIndex: 0,
+                                  pointerEvents: "none"
+                                }}>
+                                  <StampIcon size={55} strokeWidth={1.5} />
+                                </div>
+                              )}
+
+                              {/* --- 前面コンテンツ (zIndexを上げて前面へ) --- */}
+                              <div style={{ position: "relative", zIndex: 1 }}>
+                                <div style={{ fontSize: "14px", color: dateTextColor }}>
+                                  <span style={{ fontSize: "10px", display: "block", color: "#95a5a6", fontWeight: "normal" }}> 
+                                    {d.format('YYYY/MM')}
+                                  </span>
+                                  <span style={{ fontSize: "16px" }}>{day}</span>
+                                  <span style={{ fontSize: "12px", marginLeft: "2px" }}>({dayOfWeek})</span>                           
+                                  {hName && <span style={S.holidayBadge}>{hName}</span>}
+                                </div>
+
+                                <select
+                                  value={row.workType}
+                                  onChange={e => handleCellChange(dateStr, 'workType', e.target.value)}
+                                  style={{ 
+                                    ...S.input, 
+                                    marginTop: "4px", 
+                                    fontSize: "12px", 
+                                    // ★ 欠勤なら赤、確定なら緑、それ以外は通常色
+                                    color: isAbsent ? "#e74c3c" : (isFinalized ? "#27ae60" : "#2c3e50"),
+                                    fontWeight: (isAbsent || isFinalized) ? "bold" : "normal",
+                                    
+                                    backgroundColor: isFinalized ? "transparent" : "#ffffff",
+                                    border: isFinalized ? "1px solid transparent" : "1px solid #ced4da",
+                                    borderRadius: "4px",
+                                    appearance: isFinalized ? "none" : "auto", 
+                                    // @ts-ignore
+                                    WebkitAppearance: isFinalized ? "none" : "auto", 
+                                    padding: "2px", 
+                                    lineHeight: "1.5",
+                                    height: "28px",
+                                    width: "100%",
+                                    display: "block",
+                                    textAlign: "center",
+                                    cursor: isFinalized ? "default" : "pointer",
+                                    outline: "none",
+                                  }}
+                                  disabled={isFinalized || isClosed}
+                                >
+                                  <option value="">（未選択）</option>
+                                  <option value="normal">出勤（平日）</option>
+                                  <option value="holiday">公休</option>
+                                  <option value="holiday_work">休日出勤</option>
+                                  <option value="paid_full">全休(有給)</option>
+                                  <option value="paid_half">半休(有給)</option>
+                                  {/* セレクトボックスの中も赤くしておくと親切 */}
+                                  <option value="absent" style={{ color: "#e74c3c" }}>欠勤</option>
+                                </select>
                               </div>
-                              <select
-                                value={row.workType}
-                                onChange={e => handleCellChange(dateStr, 'workType', e.target.value)}
-                                style={{ ...S.inputStyle, marginTop: "4px", fontSize: "12px", padding: "2px" }}
-                                disabled={isFinalized || isClosed}
-                              >
-                                <option value="holiday">公休</option>
-                                <option value="normal">出勤（平日）</option>
-                                <option value="holiday_work">休日出勤</option>
-                                <option value="paid_full">全休(有給)</option>
-                                <option value="paid_half">半休(有給)</option>
-                                <option value="absent">欠勤</option>
-                              </select>
                             </td>
 
                             {/* --- 2. 打刻ログ表示エリア (グレーの文字の部分) --- */}
-                            <td style={{ ...S.tdTightStyle, color: "#94a3b8" }}>
+                            <td style={{ ...S.tdTight, color: "#94a3b8" }}>
                               <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(入)</span>
-                              {rowData.csv_entry_time || "--:--"}
+                              <span style={{ fontSize: "11px" }}>{rowData.csv_entry_time || "--:--"}</span>
                             </td>
-                            <td style={{ ...S.tdSpacerStyle, color: "#94a3b8" }}>
+                            <td style={{ ...S.tdSpacer, color: "#94a3b8" }}>
                               <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(出)</span>
-                              {rowData.csv_exit_time || "--:--"}
+                              <span style={{ fontSize: "11px" }}>{rowData.csv_exit_time || "--:--"}</span>
                             </td>
-                            <td colSpan={2} style={{ ...S.tdTightStyle, fontSize: "11px", color: "#bdc3c7" }}>
-                              休憩(CSV): {rowData.csv_break_start || "--:--"} ~ {rowData.csv_break_end || "--:--"}
+                            <td style={{ ...S.tdTight, color: "#94a3b8" }}>
+                              <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(休始)</span>
+                              <span style={{ fontSize: "11px" }}>{rowData.csv_break_start || "--:--"}</span>
                             </td>
-                            <td colSpan={2} style={{ ...S.tdTightStyle, fontSize: "11px", color: "#bdc3c7" }}>
-                              外出(CSV): {rowData.csv_out_time || "--:--"} ~ {rowData.csv_return_time || "--:--"}
+                            <td style={{ ...S.tdSpacer, color: "#94a3b8" }}>
+                              <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(休終)</span>
+                              <span style={{ fontSize: "11px" }}>{rowData.csv_break_end || "--:--"}</span>
+                            </td>
+                            <td style={{ ...S.tdTight, color: "#94a3b8" }}>
+                              <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(外)</span>
+                              <span style={{ fontSize: "11px" }}>{rowData.csv_out_time || "--:--"}</span>
+                            </td>
+                            <td style={{ ...S.tdSpacer, color: "#94a3b8" }}>
+                              <span style={{ fontSize: "9px", display: "block", color: "#bdc3c7" }}>打刻(戻)</span>
+                              <span style={{ fontSize: "11px" }}>{rowData.csv_return_time || "--:--"}</span>
                             </td>
 
-                            {/* --- 🆕 3. 時間有給列用の空セル (1段目はログ表示なのでここは空ける) --- */}
+                            {/* --- 3. 時間有給列 --- */}
                             <td rowSpan={3} style={{ 
                               borderLeft: "1px solid #eee", 
                               textAlign: "center", 
-                              verticalAlign: "middle", // 中央寄せにすると綺麗です
-                              backgroundColor: (row.workType === "paid_full" || row.workType === "absent") ? "#f9f9f9" : "#fff" 
+                              verticalAlign: "middle",
+                              backgroundColor: (row.workType === "paid_full" || isAbsent) ? "#f9f9f9" : rowBgColor 
                             }}>
-                              <span style={{ fontSize: "10px", color: "#94a3b8", display: "block", marginBottom: "4px" }}>時間有給</span>
+                              <span style={{ 
+                                fontSize: "10px", 
+                                // ラベルも確定時は少し緑に寄せると統一感が出ます
+                                color: isFinalized ? "#27ae60" : "#94a3b8", 
+                                display: "block", 
+                                marginBottom: "4px" 
+                              }}>
+                                時間有給
+                              </span>
+                              
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
                                 <input 
                                   type="number" 
-                                  step="0.5" 
+                                  step="1" 
                                   value={row.paidHours} 
                                   onChange={e => handleCellChange(dateStr, 'paidHours', e.target.value)} 
                                   style={{ 
                                     width: "45px", 
                                     fontSize: "13px", 
                                     textAlign: "center",
-                                    border: "1px solid #ddd",
                                     borderRadius: "4px",
-                                    backgroundColor: (isFinalized || isClosed) ? "#f5f5f5" : "#fff"
+                                    // 確定時のスタイル
+                                    border: isFinalized ? "1px solid transparent" : "1px solid #ddd",
+                                    backgroundColor: (isFinalized || isClosed) ? "transparent" : "#fff",
+                                    
+                                    // --- 🆕 色の修正：確定時は濃い緑にする ---
+                                    color: isFinalized ? "#27ae60" : "#333",
+                                    fontWeight: isFinalized ? "bold" : "normal",
+                                    opacity: 1, // ブラウザの無効化スタイルを上書き
+                                    WebkitTextFillColor: isFinalized ? "#27ae60" : undefined // iOS対策
                                   }} 
                                   disabled={isFinalized || isClosed} 
                                 />
-                                <span style={{ fontSize: "10px", color: "#7f8c8d", marginLeft: "2px" }}>h</span>
+                                <span style={{ 
+                                  fontSize: "10px", 
+                                  color: isFinalized ? "#27ae60" : "#7f8c8d", 
+                                  marginLeft: "2px",
+                                  fontWeight: isFinalized ? "bold" : "normal"
+                                }}>
+                                  h
+                                </span>
                               </div>
                             </td>
 
                             {/* --- 4. 実働 / 確定エリア (rowSpan=3 で統合) --- */}
-                            <td rowSpan={3} style={{ ...S.tdStyle, width: "130px", borderLeft: "1px solid #eee", textAlign: "center", backgroundColor: isFinalized ? "#f8fafc" : "#fffdeb" }}>
+                            <td rowSpan={3} style={{ 
+                              ...S.td, 
+                              width: "130px", 
+                              borderLeft: "1px solid #eee", 
+                              textAlign: "center", 
+                              backgroundColor: isFinalized ? "#f0fff4" : "#fffdeb",
+                              boxShadow: isFinalized ? "inset 0 0 10px rgba(46, 204, 113, 0.1)" : "none"
+                            }}>
                               <div style={{ marginBottom: "8px" }}>
                                 <span style={{ fontSize: "10px", color: "#94a3b8", display: "block" }}>
                                   {isFinalized ? "支給対象合計" : "実働(計算中)"}
@@ -629,11 +765,11 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                                     <div style={{ fontSize: "10px" }}>時間不正</div>
                                   </div>
                                 ) : isFinalized ? (
-                                  <button onClick={() => unfinalizeAttendance(dateStr)} disabled={isClosed} style={S.modernIconBtnStyle("#95a5a6")}>
+                                  <button onClick={() => unfinalizeAttendance(dateStr)} disabled={isClosed} style={S.modernIconBtn("#95a5a6")}>
                                     <Undo2 size={14} /> <span>解除</span>
                                   </button>
                                 ) : (
-                                  <button onClick={() => finalizeAttendance(dateStr)} disabled={isClosed} style={S.modernIconBtnStyle("#3498db")}>
+                                  <button onClick={() => finalizeAttendance(dateStr)} disabled={isClosed} style={S.modernIconBtn("#3498db")}>
                                     <Check size={14} /> <span>確定</span>
                                   </button>
                                 )}
@@ -642,29 +778,25 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                           </tr>
 
                           <tr style={{ 
-                            backgroundColor: (row.workType === "paid_full" || row.workType === "absent") ? "#f9f9f9" : "#fff",
-                            opacity: (row.workType === "paid_full" || row.workType === "absent") ? 0.5 : 1,
-                            pointerEvents: (row.workType === "paid_full" || row.workType === "absent") ? "none" : "auto"
+                            backgroundColor: (row.workType === "paid_full" || isAbsent ? "#f9f9f9" : rowBgColor),
+                            borderLeft: borderLeftStyle,
+                            opacity: 1, 
                           }}>
-                            <td style={S.tdTightStyle}><TimeInputPair value={row.in} onChange={val => handleCellChange(dateStr, 'in', val)} disabled={isFinalized || isClosed} /></td>
-                            <td style={S.tdSpacerStyle}><TimeInputPair value={row.out} onChange={val => handleCellChange(dateStr, 'out', val)} disabled={isFinalized || isClosed} /></td>
-                            <td style={S.tdTightStyle}><TimeInputPair value={row.bStart} onChange={val => handleCellChange(dateStr, 'bStart', val)} disabled={isFinalized || isClosed} /></td>
-                            <td style={S.tdSpacerStyle}><TimeInputPair value={row.bEnd} onChange={val => handleCellChange(dateStr, 'bEnd', val)} disabled={isFinalized || isClosed} /></td>
-                            <td style={S.tdTightStyle}><TimeInputPair value={row.outTime} onChange={val => handleCellChange(dateStr, 'outTime', val)} disabled={isFinalized || isClosed} /></td>
-                            
-                            {/* 🆕 戻り：単独の TimeInputPair になる */}
-                            <td style={{ ...S.tdSpacerStyle, paddingRight: "2px" }}>
-                              <TimeInputPair 
-                                value={row.returnTime} 
-                                onChange={val => handleCellChange(dateStr, 'returnTime', val)} 
-                                disabled={isFinalized || isClosed} 
-                              />
-                            </td>
+                            <td style={S.tdTight}><TimeInputPair value={isAbsent ? ":" : row.in} onChange={val => handleCellChange(dateStr, 'in', val)} disabled={isFinalized || isClosed || isAbsent} isFinalized={isFinalized} /></td>
+                            <td style={S.tdSpacer}><TimeInputPair value={isAbsent ? ":" : row.out} onChange={val => handleCellChange(dateStr, 'out', val)} disabled={isFinalized || isClosed || isAbsent} isFinalized={isFinalized} /></td>
+                            <td style={S.tdTight}><TimeInputPair value={isAbsent ? ":" : row.bStart} onChange={val => handleCellChange(dateStr, 'bStart', val)} disabled={isFinalized || isClosed || isAbsent} isFinalized={isFinalized} /></td>
+                            <td style={S.tdSpacer}><TimeInputPair value={isAbsent ? ":" : row.bEnd} onChange={val => handleCellChange(dateStr, 'bEnd', val)} disabled={isFinalized || isClosed || isAbsent} isFinalized={isFinalized} /></td>
+                            <td style={S.tdTight}><TimeInputPair value={isAbsent ? ":" : row.outTime} onChange={val => handleCellChange(dateStr, 'outTime', val)} disabled={isFinalized || isClosed || isAbsent} isFinalized={isFinalized} /></td>
+                            <td style={{ ...S.tdSpacer, paddingRight: "2px" }}><TimeInputPair value={isAbsent ? ":" : row.returnTime} onChange={val => handleCellChange(dateStr, 'returnTime', val)} disabled={isFinalized || isClosed || isAbsent} isFinalized={isFinalized} /></td>
                           </tr>
 
-                          <tr style={{ backgroundColor: "#fdfdfd", borderBottom: "1px solid #eee" }}>
+                          <tr style={{ 
+                            backgroundColor: rowBgColor,
+                            borderBottom: "1px solid #eee",
+                            borderLeft: borderLeftStyle
+                          }}>
                             <td colSpan={6} style={{ padding: "6px 12px", pointerEvents: "auto" }}>
-                              <div style={S.memoContainerStyle}>
+                              <div style={S.memoContainer}>
                                 <span style={{ fontSize: "11px", color: "#94a3b8", fontWeight: "bold", whiteSpace: "nowrap", flexShrink: 0 }}>
                                   備考：
                                 </span>
@@ -673,7 +805,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                                   placeholder="理由、遅刻・早退の内容など" 
                                   value={row.memo || ""}
                                   onChange={e => handleCellChange(dateStr, 'memo', e.target.value)}
-                                  style={S.memoInputStyle}
+                                  style={{...S.memoInput, color: isFinalized ? "#27ae60" : "inherit"}}
                                   disabled={isFinalized || isClosed}
                                 />
                               </div>
@@ -686,13 +818,20 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                 </table>
 
                 {/* --- スタッフ選択済み：計算結果を表示 --- */}
-                <div style={S.summaryBoardStyle}>
+                <div style={S.summaryBoard}>
                   <div>
                     <div style={{ fontSize: "12px", color: "#bdc3c7" }}>基本情報</div>
-                    <div style={{ fontSize: "18px", fontWeight: "bold" }}>{Object.values(monthlyWorkData).filter(d => d.is_finalized).length}日 / {formatHours(calcResult?.totalWorkHours || 0)}</div>
-                    {/* 🆕 月給制の場合は本来の額面を小さく表示 */}
+                    <div style={{ fontSize: "18px", fontWeight: "bold" }}>
+                      {Object.values(monthlyWorkData).filter(d => d.is_finalized).length}日 / {formatHours(calcResult?.totalWorkHours || 0)}
+                    </div>
                     {selectedStaff?.wage_type === "monthly" && (
                       <div style={{ fontSize: "11px", color: "#95a5a6" }}>月給: ¥{Number(selectedStaff?.base_wage || 0).toLocaleString()}</div>
+                    )}
+                     {selectedStaff?.wage_type === "daily" && (
+                      <div style={{ fontSize: "11px", color: "#95a5a6" }}>日給: ¥{Number(selectedStaff?.base_wage || 0).toLocaleString()}</div>
+                    )}
+                     {selectedStaff?.wage_type === "hourly" && (
+                      <div style={{ fontSize: "11px", color: "#95a5a6" }}>時給: ¥{Number(selectedStaff?.base_wage || 0).toLocaleString()}</div>
                     )}
                   </div>
                                 
@@ -703,8 +842,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                     </div>
                     {(calcResult?.highPremiumHours ?? 0) > 0 && (
                       <div style={{ fontSize: "11px", color: "#ff7675" }}> 
-                        {/* 🆕 60 という数字と、50% という数字を定数から算出 */}
-                        (うち{OVERTIME_PREMIUM_LIMIT_HOURS}h超 [{(OVERTIME_PREMIUM_RATE - 1) * 100}%増]: {formatHours(calcResult?.highPremiumHours ?? 0)}) 
+                        (うち{Master.OVERTIME_PREMIUM_LIMIT_HOURS}h超 [{(Master.OVERTIME_PREMIUM_RATE - 1) * 100}%増]: {formatHours(calcResult?.highPremiumHours ?? 0)}) 
                       </div>
                     )}
                   </div>
@@ -714,29 +852,32 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
                     <div style={{ fontSize: "18px", fontWeight: "bold", color: "#f1c40f" }}>{formatHours(calcResult?.totalNightHours ?? 0)}</div>
                   </div>
 
-                  {/* 🆕 欠勤控除がある場合はここを表示、なければ交通費を表示 */}
+                  {/* 交通費：常に出す */}
                   <div>
-                    {calcResult && calcResult.absenceDeduction > 0 ? (
-                      <>
-                        <div style={{ fontSize: "12px", color: "#ff7675" }}>欠勤控除</div>
-                        <div style={{ fontSize: "18px", fontWeight: "bold", color: "#ff7675" }}>
-                          -¥{calcResult.absenceDeduction.toLocaleString()}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div style={{ fontSize: "12px", color: "#bdc3c7" }}>交通費</div>
-                        <div style={{ fontSize: "18px", fontWeight: "bold" }}>¥{(calcResult?.commutePay ?? 0).toLocaleString()}</div>
-                      </>
-                    )}
+                    <div style={{ fontSize: "12px", color: "#bdc3c7" }}>交通費</div>
+                    <div style={{ fontSize: "18px", fontWeight: "bold" }}>
+                      ¥{(calcResult?.commutePay ?? 0).toLocaleString()}
+                    </div>
                   </div>
 
-                  <div style={{ borderLeft: "1px solid #7f8c8d", paddingLeft: "20px", textAlign: "right" }}>
-                    <div style={{ fontSize: "12px", color: "#2ecc71" }}><Banknote size={14} style={{ ...S.iconWrapperStyle, marginRight: "0" }} /> 差引総支給額（概算）</div>
+                  {/* 🆕 欠勤控除がある場合のみ追加で表示：三項演算子ではなく「&&」で差し込む */}
+                  {calcResult && calcResult.absenceDeduction > 0 && (
+                    <div style={{ borderLeft: "1px solid #eee", paddingLeft: "15px" }}>
+                      <div style={{ fontSize: "12px", color: "#ff7675" }}>欠勤控除</div>
+                      <div style={{ fontSize: "18px", fontWeight: "bold", color: "#ff7675" }}>
+                        -¥{calcResult.absenceDeduction.toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ borderLeft: "1px solid #7f8c8d", paddingLeft: "20px", textAlign: "right", marginLeft: "auto" }}>
+                    <div style={{ fontSize: "12px", color: "#2ecc71" }}>
+                      <Banknote size={14} style={{ verticalAlign: "middle", marginRight: "4px" }} /> 
+                      差引総支給額（概算）
+                    </div>
                     <div style={{ fontSize: "28px", fontWeight: "bold", color: "#2ecc71" }}>
                       ¥{(calcResult?.totalEarnings ?? 0).toLocaleString()}
                     </div>
-                    {/* 🆕 補足: 交通費が含まれていることを明記 */}
                     <div style={{ fontSize: "10px", color: "#95a5a6" }}>※残業・深夜・交通費・控除を反映済</div>
                   </div>
                 </div>
@@ -745,7 +886,7 @@ export default function AttendanceManager(props: AttendanceManagerProps) {
           ) : (
             // --- 未選択時：ガイドを表示 ---
             <div style={{ 
-              ...S.summaryBoardStyle, 
+              ...S.summaryBoard, 
               display: "flex",           // 確実にflexを適用
               flexDirection: "column",   // 縦並びにする
               alignItems: "center",      // 左右中央

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 // @ts-ignore
 import Database from "@tauri-apps/plugin-sql";
 import { ask } from "@tauri-apps/plugin-dialog";
-import * as Master from '../../constants/salaryMaster2026';
+import * as Master from '../../constants';
 import { applyRounding } from '../../utils/payrollUtils';
 
 // --- Types ---

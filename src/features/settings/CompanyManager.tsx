@@ -4,6 +4,7 @@ import Database from "@tauri-apps/plugin-sql";
 import { fetch } from '@tauri-apps/plugin-http';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { 
+    PencilLine,
     Fingerprint,
     Building2,    // 基本情報（ビル）
     FileText,     // 給与規定（書類）
@@ -30,7 +31,8 @@ import {
     Clock,
     Hash
 } from 'lucide-react';
-import { PREFECTURE_MASTER, KENPO_RATES, KENPO_CARE_RATE, PENSION_RATE, CHILD_ALLOWANCE_RATE, MASTER_YEAR, MASTER_MONTH } from "../../constants/salaryMaster2026";
+// import { PREFECTURE_MASTER, KENPO_RATES, KENPO_CARE_RATE, PENSION_RATE, CHILD_ALLOWANCE_RATE, MASTER_YEAR, MASTER_MONTH } from "../../constants";
+import * as Master from '../../constants';
 import { fetchAddressByZip } from "../../utils/addressUtils";
 
 interface Props {
@@ -85,8 +87,8 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
     // --- 社会保険規定（会社負担分）のState ---
     const [sgCompHealthRate, setSgCompHealthRate] = useState(0);
     const [sgCompCareRate, setSgCompCareRate] = useState(0);
-    const [sgCompPensionRate, setSgCompPensionRate] = useState(PENSION_RATE[0]); // デフォルトは折半率
-    const [sgChildAllowanceRate, setSgChildAllowanceRate] = useState(CHILD_ALLOWANCE_RATE);
+    const [sgCompPensionRate, setSgCompPensionRate] = useState(Master.PENSION_RATE[0]); // デフォルトは折半率
+    const [sgChildAllowanceRate, setSgChildAllowanceRate] = useState(Master.CHILD_ALLOWANCE_RATE);
     const [sgCompFixedAmount, setSgCompFixedAmount] = useState(0); // 定額時の会社負担用
 
     // --- 支店管理用ステート ---
@@ -339,16 +341,16 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
     // 計算用のヘルパー
     const getRates = (pref: string) => {
         // 1. 都道府県別の料率を取得（見つからない場合は京都をフォールバックに）
-        const rateData = KENPO_RATES[pref] || KENPO_RATES["京都"];
+        const rateData = Master.KENPO_RATES[pref] || Master.KENPO_RATES["京都"];
         
         // rateData[1] が「総料率」です
         const healthTotal = rateData[1]; 
         
         // 2. 介護保険料率（総額）を取得
-        const careTotal = KENPO_CARE_RATE[1]; 
+        const careTotal = Master.KENPO_CARE_RATE[1]; 
         
         // 3. 厚生年金料率（総額）を取得
-        const pensionTotal = PENSION_RATE[1];
+        const pensionTotal = Master.PENSION_RATE[1];
 
         return {
             healthTotal: healthTotal.toFixed(2),
@@ -424,8 +426,8 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
         setSgFixedAmount(0);
         setSgCompHealthRate(0);
         setSgCompCareRate(0);
-        setSgCompPensionRate(PENSION_RATE[0]);
-        setSgChildAllowanceRate(CHILD_ALLOWANCE_RATE);
+        setSgCompPensionRate(Master.PENSION_RATE[0]);
+        setSgChildAllowanceRate(Master.CHILD_ALLOWANCE_RATE);
         setSgCompFixedAmount(0);
         
         setEditingSgId(null);
@@ -438,8 +440,8 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
         setSgFixedAmount(sg.fixed_amount);
         setSgCompHealthRate(sg.comp_health_rate || 0);
         setSgCompCareRate(sg.comp_care_rate || 0);
-        setSgCompPensionRate(sg.comp_pension_rate || PENSION_RATE[0]);
-        setSgChildAllowanceRate(sg.child_allowance_rate || CHILD_ALLOWANCE_RATE);
+        setSgCompPensionRate(sg.comp_pension_rate || Master.PENSION_RATE[0]);
+        setSgChildAllowanceRate(sg.child_allowance_rate || Master.CHILD_ALLOWANCE_RATE);
         setSgCompFixedAmount(sg.comp_fixed_amount || 0);
     };
 
@@ -714,7 +716,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                 }
                 setCompZip(foundZip);
 
-                const found = PREFECTURE_MASTER.find(p => cleanAddr.startsWith(p.name));
+                const found = Master.PREFECTURE_MASTER.find(p => cleanAddr.startsWith(p.name));
                 let detectedPref = found ? found.name : "";
 
                 if (detectedPref) {
@@ -745,7 +747,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
             {!hasSavedOnce ? (
                 <>
                     <div style={welcomeBannerStyle}>
-                        <h2 style={{ margin: 0 }}>🚢 はじめに：初期設定</h2>
+                        <h2 style={{ margin: 0 }}><PencilLine size={18} /> はじめに：初期設定</h2>
                         <p style={{ margin: "10px 0 0 0" }}>会社名と所在地を設定して、アプリを開始しましょう。</p>
                     </div>
 
@@ -866,7 +868,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                                                 }}
                                             >
                                                 <option value="">都道府県 (必須)</option>
-                                                {PREFECTURE_MASTER.map(p => (
+                                                {Master.PREFECTURE_MASTER.map(p => (
                                                     <option key={p.code} value={p.name}>
                                                         {p.name}
                                                     </option>
@@ -1120,7 +1122,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                                             <div style={{ display: "flex", gap: "10px" }}>
                                                 <select value={headPref} onChange={e => setHeadPref(e.target.value)} onFocus={handleFocus} onBlur={(e) => handleBlur(e, !headPref)} style={{ ...inputStyle, width: "160px" }}>
                                                     <option value="">都道府県 (必須)</option>
-                                                    {PREFECTURE_MASTER.map(p => (
+                                                    {Master.PREFECTURE_MASTER.map(p => (
                                                         <option key={p.code} value={p.name}>
                                                             {p.name}
                                                         </option>
@@ -1139,7 +1141,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                                         </div>
                                     </div>
 
-                                    {/* 🆕 週の起算日設定（保存済み版：ガードレール付き） */}
+                                    {/* 週の起算日設定（保存済み版：ガードレール付き） */}
                                     <div style={{ 
                                         gridColumn: "1 / 3", 
                                         padding: "15px", 
@@ -1540,7 +1542,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                                             }}>
                                             <div style={{ fontWeight: "bold", marginBottom: "12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                                 <span style={{ fontSize: "14px", color: "#1e293b" }}>
-                                                📊 適用料率（{MASTER_YEAR}年{MASTER_MONTH}月改定版）
+                                                📊 適用料率（{Master.MASTER_YEAR}年{Master.MASTER_MONTH}月改定版）
                                                 </span>
                                             </div>
 
@@ -1552,7 +1554,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
                                                 onChange={(e) => setPreviewPref(e.target.value)}
                                                 style={{ ...inputStyle, height: "32px", fontSize: "13px", padding: "0 8px" }}
                                                 >
-                                                {Object.keys(KENPO_RATES).map(pref => (
+                                                {Object.keys(Master.KENPO_RATES).map(pref => (
                                                     <option key={pref} value={pref}>{pref}</option>
                                                 ))}
                                                 </select>
@@ -1765,7 +1767,7 @@ export default function CompanyManager({ db, onSetupComplete }: Props) {
 
                                     <select value={bPref} onChange={e => setBPref(e.target.value)} onFocus={handleFocus} onBlur={handleBlur} style={{ ...inputStyle, ...inputBottomSpace }}>
                                         <option value="">都道府県 (必須)</option>
-                                        {PREFECTURE_MASTER.map(p => (
+                                        {Master.PREFECTURE_MASTER.map(p => (
                                             <option key={p.code} value={p.name}>
                                                 {p.name}
                                             </option>

@@ -1,7 +1,7 @@
 import dayjs, { Dayjs } from 'dayjs';
 import isSameOrBefore from 'dayjs/plugin/isSameOrBefore';
 import minMax from 'dayjs/plugin/minMax';
-import * as Master from '../constants/salaryMaster2026';
+import * as Master from '../constants';
 
 dayjs.extend(isSameOrBefore);
 dayjs.extend(minMax);

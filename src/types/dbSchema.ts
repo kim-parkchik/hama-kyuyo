@@ -1,4 +1,5 @@
-import { HOLIDAY_CSV_URL_DEFAULT, PENSION_RATE, CHILD_ALLOWANCE_RATE } from "../constants/salaryMaster2026";
+import { HOLIDAY_CSV_URL_DEFAULT } from "../constants/appConfig";
+import * as Master from '../constants';
 
 export const DB_SCHEMAS = [
     // 0. ユーザー管理（ログイン・権限）
@@ -136,7 +137,7 @@ export const DB_SCHEMAS = [
     csv_break_end TEXT,
     csv_out_time TEXT,
     csv_return_time TEXT,
-    work_type TEXT DEFAULT 'normal',
+    work_type TEXT DEFAULT '',
     paid_leave_hours REAL DEFAULT 0,
     memo TEXT,
     is_finalized INTEGER DEFAULT 0,  -- 0: 未確定, 1: 確定済み
@@ -317,14 +318,14 @@ export const DB_SCHEMAS = [
     -- ★ 本人負担率（給与から引く分）
     health_rate REAL DEFAULT 0.0,    
     care_rate REAL DEFAULT 0.0,      
-    pension_rate REAL DEFAULT ${PENSION_RATE[0]},  -- 厚生年金は折半後(18.3 / 2)の値を保持
+    pension_rate REAL DEFAULT ${Master.PENSION_RATE[0]},  -- 厚生年金は折半後(18.3 / 2)の値を保持
 
     -- ★ 会社負担率（会社が納付する分：法定福利費の計算用）
     -- 協会けんぽ以外（組合健保など）で負担割合が折半でない場合に対応
     comp_health_rate REAL DEFAULT 0.0,
     comp_care_rate REAL DEFAULT 0.0,
-    comp_pension_rate REAL DEFAULT ${PENSION_RATE[0]},
-    child_allowance_rate REAL DEFAULT ${CHILD_ALLOWANCE_RATE}, -- 子ども・子育て拠出金（会社全額負担分）
+    comp_pension_rate REAL DEFAULT ${Master.PENSION_RATE[0]},
+    child_allowance_rate REAL DEFAULT ${Master.CHILD_ALLOWANCE_RATE}, -- 子ども・子育て拠出金（会社全額負担分）
 
     fixed_amount INTEGER DEFAULT 0,  -- 定額時の金額
     is_active INTEGER DEFAULT 1

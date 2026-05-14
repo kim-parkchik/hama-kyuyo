@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import * as Master from '../../constants/salaryMaster2026';
+import * as Master from '../../constants';
 import { calculateSalary, saveSalaryResult, type SalaryExtras } from '../../utils/calcSalary';
 
 // 型定義

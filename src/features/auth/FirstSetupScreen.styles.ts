@@ -1,57 +1,66 @@
 import { CSSProperties } from "react";
 
-export const containerStyle: CSSProperties = {
-  height: "100vh",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  // 🆕 ロゴの開始色 #002D62 を採用
-  backgroundColor: "#002D62",
-  fontFamily: "sans-serif"
-};
+export const S = {
+  // 画面全体のコンテナ
+  container: {
+    height: "100vh",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#002D62", // ロゴの開始色
+    fontFamily: "sans-serif"
+  } as CSSProperties,
 
-export const cardStyle: CSSProperties = {
-  width: "400px",
-  padding: "40px",
-  backgroundColor: "white",
-  borderRadius: "15px",
-  // 影を少し深くして、濃い背景の上で浮き出るように調整
-  boxShadow: "0 25px 50px rgba(0,0,0,0.4)"
-};
+  // ログインカード
+  card: {
+    width: "400px",
+    padding: "40px",
+    backgroundColor: "white",
+    borderRadius: "15px",
+    boxShadow: "0 25px 50px rgba(0,0,0,0.4)" // 濃い背景用に深めの影
+  } as CSSProperties,
 
-export const inputStyle: CSSProperties = {
-  width: "100%",
-  padding: "12px",
-  marginTop: "5px",
-  border: "1px solid #ddd",
-  borderRadius: "6px",
-  boxSizing: "border-box",
-  fontSize: "16px",
-  outlineColor: "#0055A4" // 入力時の枠線をロゴの青に
-};
+  // 入力フィールド
+  input: {
+    width: "100%",
+    padding: "12px",
+    marginTop: "5px",
+    border: "1px solid #ddd",
+    borderRadius: "6px",
+    boxSizing: "border-box",
+    fontSize: "16px",
+    outlineColor: "#0055A4" // 入力時の枠線をロゴの青に
+  } as CSSProperties,
 
-export const labelStyle: CSSProperties = {
-  fontSize: "12px",
-  color: "#4a5568", // 少し濃いめにして読みやすく
-  fontWeight: "bold",
-  display: "block",
-  marginTop: "15px"
-};
+  // ラベル
+  label: {
+    fontSize: "12px",
+    color: "#4a5568",
+    fontWeight: "bold",
+    display: "block",
+    marginTop: "15px"
+  } as CSSProperties,
 
-/**
- * 🆕 ログインボタンや登録ボタン用のスタイルも追加
- */
-export const primaryButtonStyle: CSSProperties = {
-  width: "100%",
-  padding: "14px",
-  marginTop: "30px",
-  // 🆕 ロゴの終了色 #0055A4 を採用
-  backgroundColor: "#0055A4",
-  color: "white",
-  border: "none",
-  borderRadius: "6px",
-  fontSize: "16px",
-  fontWeight: "bold",
-  cursor: "pointer",
-  transition: "background-color 0.2s"
+  // ログイン・登録ボタン
+  primaryButton: {
+    width: "100%",
+    padding: "14px",
+    marginTop: "30px",
+    backgroundColor: "#0055A4", // ロゴの終了色
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "16px",
+    fontWeight: "bold",
+    cursor: "pointer",
+    transition: "background-color 0.2s"
+  } as CSSProperties,
+
+  iconWrapper: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    verticalAlign: "middle",
+    marginRight: "8px"
+  } as CSSProperties,
 };
